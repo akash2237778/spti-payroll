@@ -6,7 +6,7 @@
   {% elif run %}<span class="badge warn">draft saved {{ run.created_at }}</span>{% else %}<span class="badge">live preview</span>{% endif %}
 </h1>
 <div class="toolbar noprint">
-  {% if user.role == 'admin' %}
+  {% if can_pay %}
     {% if not run or run.status != 'final' %}
     <form method="post">{{ csrf_field() }}<button class="light" name="action" value="save">Save draft</button></form>
     <form method="post" onsubmit="return confirm('Finalize {{ month }}? Attendance and adjustments for this month will be locked.')">{{ csrf_field() }}<button name="action" value="finalize">Finalize &amp; lock</button></form>

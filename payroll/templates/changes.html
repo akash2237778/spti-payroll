@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% block title %}Changes {{ month }}{% endblock %}
+{% block body %}
+<h1>Changes to machine data {{ monthnav('changes_view', month, prev, nxt, eid=emp_id, kind=kind, by=by) }}
+  {% if locked %}<span class="badge bad">payroll finalized - undo locked</span>{% endif %}</h1>
+<p class="muted">Every place where a person changed what the attendance machine recorded: added or ignored punches, IN/OUT decisions,
+forced day statuses, leaves, late penalties, shift changes and holidays. For each affected day you see what the <b>machine alone</b> gives
+and what is <b>used now</b>. <b>Undo</b> removes a change so the machine's data applies again.</p>
+
+<form class="toolbar noprint" method="get">
+  <input type="hidden" name="month" value="{{ month }}">
+  <select name="eid" onchange="this.form.submit()"><option value="">All employees</option>
+    {% for e in emps %}<option value="{{ e.id }}" {{ 'selected' if e.id == emp_id }}>{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select>
+  <select name="kind" onchange="this.form.submit()"><option value="">All change types ({{ total }})</option>
+    {% for k, label in KINDS.items() %}<option value="{{ k }}" {{ 'selected' if k == kind }}>{{ label }} ({{ counts[k] }})</option>{% endfor %}</select>
+  <select name="by" onchange="this.form.submit()"><option value="">Changed by anyone</option>
+    {% for u in users %}<option {{ 'selected' if u == by }}>{{ u }}</option>{% endfor %}</select>
+</form>
+
+<div class="stats">
+  {% for k, label in KINDS.items() if counts[k] %}
+  <a class="stat" href="{{ url_for('changes_view', month=month, kind=k, eid=emp_id) }}" style="text-decoration:none;color:inherit"><span>{{ label }}</span><b>{{ counts[k] }}</b></a>
+  {% endfor %}
+</div>
+
+<div class="scroll"><table class="changes">
+  <tr><th>Day</th><th>Employee</th><th>Machine data says</th><th>Used now</th><th>Change</th><th>Was → Now</th><th>Reason</th><th>By</th><th>When</th><th></th></tr>
+  {% for gr in groups %}{% set n = [gr['items']|length, 1]|max %}
+    {% for c in (gr['items'] or [none]) %}
+    <tr class="{{ 'grp' if loop.first }}">
+      {% if loop.first %}
+      <td rowspan="{{ n }}" style="white-space:nowrap"><b>{{ gr.date.strftime('%d %b') }}</b> <span class="muted">{{ gr.date.strftime('%a') }}</span></td>
+      <td rowspan="{{ n }}">{% if gr.emp %}<a href="{{ url_for('att_employee', eid=gr.emp.id, month=month) }}#d{{ gr.date.day }}">{{ gr.emp.name }}</a> <span class="muted small">#{{ gr.emp.device_user_id }}</span>{% else %}<i>everyone</i>{% endif %}</td>
+      <td rowspan="{{ n }}" class="small">{{ gr.cmp.machine if gr.cmp else '' }}</td>
+      <td rowspan="{{ n }}" class="small">{% if gr.cmp %}<span class="{{ 'chg' if gr.cmp.differs }}">{{ gr.cmp.now }}</span>{% endif %}</td>
+      {% endif %}
+      {% if c %}
+      <td><span class="badge kind-{{ c.kind }}">{{ c.label }}</span></td>
+      <td class="small">{% if c.machine %}<s class="muted">{{ c.machine }}</s> → {% endif %}<b>{{ c.changed }}</b></td>
+      <td class="small">{{ c.reason }}</td><td class="small">{{ c.by }}</td><td class="small muted">{{ c.at }}</td>
+      <td style="white-space:nowrap">
+        {% if gr.emp and c.kind not in ('roster',) %}<a class="small" href="{{ url_for('att_day', eid=gr.emp.id, date=gr.date.isoformat(), back=request.full_path) }}">day</a>{% endif %}
+        {% if can_edit and not locked %}
+        <form method="post" action="{{ url_for('changes_undo') }}" class="inline" onsubmit="return confirm('Undo this change?')">{{ csrf_field() }}
+          <input type="hidden" name="kind" value="{{ c.undo.kind }}"><input type="hidden" name="id" value="{{ c.undo.id }}">
+          <input type="hidden" name="back" value="{{ request.full_path }}"><button class="light small">Undo</button></form>
+        {% endif %}</td>
+      {% else %}
+      <td colspan="6" class="small muted">differs because of a shift change (see the "Shift changed" entry)</td>
+      {% endif %}
+    </tr>
+    {% endfor %}
+  {% else %}<tr><td colspan="10" class="muted">No changes to machine data in {{ month }}{{ ' for this filter' if kind or by or emp_id }}.</td></tr>{% endfor %}
+</table></div>
+<style>
+  .changes tr.grp td { border-top: 2px solid #c8d0d9; }
+  .changes .chg { background: #fff1cc; padding: 1px 4px; border-radius: 4px; }
+  .kind-punch_added { background: #d6e9ff; } .kind-punch_ignored { background: #fadbd8; } .kind-punch_marked { background: #e0f2f1; }
+  .kind-status { background: #ece2fb; } .kind-leave { background: #d9f2e3; } .kind-penalty { background: #ffe0b2; }
+  .kind-roster { background: #fff1cc; } .kind-holiday { background: #e8eaed; }
+</style>
+{% endblock %}

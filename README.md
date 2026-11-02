@@ -42,6 +42,18 @@ Corrections are made on **punches**, not days. Pairing is recomputed every time,
 - **Attendance statements**: printable per employee (one page each), with every day and the salary calculation written out. From the employee month view, Muster roll or Payroll.
 - **Excel with formulas**: one sheet per employee with the day table; worked minutes, OT, late penalty, payable days, basic, OT pay, PF, ESI and net pay are live Excel formulas. The Payroll sheet links to each employee sheet and the Rules sheet holds editable rates. The test suite recalculates the workbook and checks it matches the app to the rupee.
 
+## Changes to machine data, and roles
+
+- **Changes** (menu): every place a person changed what the attendance machine recorded — added or ignored punches,
+  IN/OUT decisions, forced day statuses, leaves, late penalties, shift changes and holidays. Each affected day shows
+  what the machine alone gives next to what is used now, with who, when and why. **Undo** reverts one change.
+  Edited days are outlined on the muster roll, the employee month view and the daily screen.
+- **Roles** (Settings → Users & roles):
+  - **Admin** – everything, including salaries, payroll, advances, settings and users.
+  - **HR** – all attendance work (corrections, leaves, holidays, shifts, employees) but no salary, payroll,
+    advances, bank details or salary exports anywhere. Enforced on the server: pay fields an HR user submits are ignored.
+  - **Viewer** – read-only attendance, no salaries.
+
 ## How hours and pay are calculated
 
 | Rule | Default (editable) |

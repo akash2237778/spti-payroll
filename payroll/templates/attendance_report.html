@@ -3,7 +3,7 @@
 {% block body %}
 <div class="toolbar noprint">
   <button onclick="window.print()">Print</button>
-  <a class="btn light" href="{{ url_for('export_formula_xlsx', month=month, eid=request.args.get('eid')) }}">Excel with formulas</a>
+  {% if can_pay %}<a class="btn light" href="{{ url_for('export_formula_xlsx', month=month, eid=request.args.get('eid')) }}">Excel with formulas</a>{% endif %}
   <span class="muted">{{ rows|length }} employee statement(s) · each prints on its own page{% if run and run.status == 'final' %} · salary figures from the finalized payroll{% endif %}</span>
 </div>
 <style>
@@ -23,7 +23,7 @@
   <table class="meta" style="margin:8px 0;width:auto"><tr>
     <td>Employee: <b>{{ e.name }}</b></td><td>ID: <b>{{ e.emp_code or e.device_user_id }}</b></td><td>Department: {{ e.department or '-' }}</td>
     <td>Shift: {{ r.shift.name }} {{ r.shift.start_time }}–{{ r.shift.end_time }}</td>
-    <td>Salary: {{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td></tr></table>
+    {% if can_pay %}<td>Salary: {{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td>{% endif %}</tr></table>
   <table>
     <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early</th>
       <th class="n">OT</th><th class="n">Late pen.</th><th class="n">Day credit</th><th>Notes</th></tr>
@@ -50,9 +50,9 @@
         <td>{{ s.get('cnt_WO',0)|days }}</td><td>{{ (s.get('cnt_WOP',0) + s.get('cnt_HP',0))|days }}</td><td>{{ s.get('cnt_H',0)|days }}</td>
         <td>{{ (s.get('cnt_L',0) + s.get('cnt_LWP',0))|days }}</td><td>{{ s.get('late_count',0)|days }}</td><td><b>{{ s.payable_days|days }}</b></td></tr>
     </table>
-    <table class="calc grow">
+    {% if can_pay %}<table class="calc grow">
       {% for label, working, result in r.calc %}<tr><td>{{ label }}</td><td>{{ working }}</td><td>{{ result }}</td></tr>{% endfor %}
-    </table>
+    </table>{% endif %}
   </div>
   <div class="small muted" style="margin-top:26px;display:flex;justify-content:space-between"><span>Prepared by</span><span>Checked by</span><span>Employee signature</span></div>
 </div>

@@ -10,7 +10,7 @@ Only what the system can't be sure about is listed here. Each fix re-pairs all l
   <a class="btn small {{ '' if kind=='long' else 'light' }}" href="{{ url_for('exceptions', month=month, kind='long') }}">Long duty ({{ counts.long }})</a>
   <a class="btn small {{ '' if kind=='short' else 'light' }}" href="{{ url_for('exceptions', month=month, kind='short') }}">Too short ({{ counts.short }})</a>
 </div>
-{% set admin = user.role == 'admin' %}
+{% set admin = can_edit %}
 <form method="post" id="bulk">{{ csrf_field() }}</form>
 {% if admin %}
 <div class="toolbar">

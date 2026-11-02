@@ -25,9 +25,9 @@ Punches before the "day starts at" hour count towards the previous day, so late 
     <div><label>Work day starts at (hour)</label><input type="number" min="0" max="23" name="day_start_hour" value="{{ s.day_start_hour if s else 5 }}"></div>
   </div>
   <div style="margin-top:10px">{% if s %}<span class="muted small">{{ s.n }} employee(s) · standard paid hours {{ fmt_min(std_minutes(s)) }} ·</span>{% endif %}
-  {% if user.role == 'admin' %}<button>{{ 'Save' if s else 'Add shift' }}</button>{% endif %}</div>
+  {% if can_edit %}<button>{{ 'Save' if s else 'Add shift' }}</button>{% endif %}</div>
 </form>
 {% endmacro %}
 {% for s in rows %}<h2>{{ s.name }}</h2>{{ shift_form(s) }}{% endfor %}
-{% if user.role == 'admin' %}<h2>New shift</h2>{{ shift_form(None) }}{% endif %}
+{% if can_edit %}<h2>New shift</h2>{{ shift_form(None) }}{% endif %}
 {% endblock %}

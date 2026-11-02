@@ -2,7 +2,7 @@
 {% block title %}Leaves {{ month }}{% endblock %}
 {% block body %}
 <h1>Leaves {{ monthnav('leaves', month, prev, nxt) }}</h1>
-{% if user.role == 'admin' %}
+{% if can_edit %}
 <form method="post" class="card row">{{ csrf_field() }}
   <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
   <div><label>From</label><input type="date" name="from" required></div>
@@ -18,7 +18,7 @@
 <div class="grow"><h2>{{ month }}</h2><table>
   <tr><th>Date</th><th>Employee</th><th>Type</th><th>Paid</th><th>Half</th><th>Reason</th><th></th></tr>
   {% for l in rows %}<tr><td>{{ l.leave_date }}</td><td>{{ l.name }}</td><td>{{ l.leave_type }}</td><td>{{ 'Yes' if l.paid else 'No' }}</td><td>{{ 'Yes' if l.half_day else '' }}</td><td>{{ l.reason }}</td>
-    <td>{% if user.role == 'admin' %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ l.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
+    <td>{% if can_edit %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ l.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
   {% else %}<tr><td colspan="7" class="muted">No leaves this month.</td></tr>{% endfor %}
 </table></div>
 <div style="min-width:280px"><h2>Leaves taken in {{ year }}</h2><table>

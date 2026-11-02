@@ -8,24 +8,22 @@
   </span>
 </h1>
 <div class="toolbar">
-  {% if user.role == 'admin' %}
-  <a class="btn" href="{{ url_for('employee_edit') }}">+ Add employee</a>
-  <a class="btn light" href="{{ url_for('employees_bulk') }}">Bulk edit salaries</a>
-  {% endif %}
+  {% if can_edit %}<a class="btn" href="{{ url_for('employee_edit') }}">+ Add employee</a>{% endif %}
+  {% if can_pay %}<a class="btn light" href="{{ url_for('employees_bulk') }}">Bulk edit salaries</a>{% endif %}
   <a class="btn light" href="{{ url_for('employees_export') }}">Export CSV</a>
-  {% if user.role == 'admin' %}
+  {% if is_admin %}
   <form method="post" action="{{ url_for('employees_import') }}" enctype="multipart/form-data" class="row" style="align-items:center">{{ csrf_field() }}
     <input type="file" name="file" accept=".csv" required><button class="light">Import CSV</button>
   </form>
   <span class="small muted">CSV columns are matched by header (same as the export), keyed on device_user_id.</span>
   {% endif %}
 </div>
-<p class="small muted noprint">Click <b>✎</b> on a row to edit it right here; <b>Save</b> applies immediately. Use the name link for the full profile (bank, PF/ESI, weekly off, shift history).</p>
+<p class="small muted noprint">Click <b>✎</b> on a row to edit it right here; <b>Save</b> applies immediately. Use the name link for the full profile ({{ 'bank, PF/ESI, ' if can_pay }}weekly off, shift history).</p>
 <div class="scroll"><table class="emp-list">
-  <tr><th></th><th>Device ID</th><th>Name</th><th>Department</th><th>Designation</th><th>Shift</th><th>Salary</th><th class="n">Rate</th><th>Weekly off</th><th>OT</th><th>Lunch</th><th>PF/ESI</th><th>Joined</th><th>Last punch</th><th>Status</th></tr>
+  <tr><th></th><th>Device ID</th><th>Name</th><th>Department</th><th>Designation</th><th>Shift</th>{% if can_pay %}<th>Salary</th><th class="n">Rate</th>{% endif %}<th>Weekly off</th>{% if can_pay %}<th>OT</th>{% endif %}<th>Lunch</th>{% if can_pay %}<th>PF/ESI</th>{% endif %}<th>Joined</th><th>Last punch</th><th>Status</th></tr>
   {% for e in rows %}{% set fid = 'q' ~ e.id %}
   <tr id="emp-{{ e.id }}" class="qrow">
-    <td style="white-space:nowrap">{% if user.role == 'admin' %}
+    <td style="white-space:nowrap">{% if can_edit %}
       <form id="{{ fid }}" method="post" action="{{ url_for('employee_quick', eid=e.id) }}" style="display:none">{{ csrf_field() }}<input type="hidden" name="back" value="{{ request.full_path }}"></form>
       <button type="button" class="light small view" onclick="qedit(this, true)" title="Quick edit">✎</button>
       <button form="{{ fid }}" class="small edit">Save</button>
@@ -34,19 +32,23 @@
     <td><a class="view" href="{{ url_for('employee_edit', eid=e.id) }}">{{ e.name }}</a><input class="edit" form="{{ fid }}" name="name" value="{{ e.name }}" size="12"></td>
     <td><span class="view">{{ e.department }}</span><input class="edit" form="{{ fid }}" name="department" value="{{ e.department }}" size="9"></td>
     <td><span class="view">{{ e.designation }}</span><input class="edit" form="{{ fid }}" name="designation" value="{{ e.designation }}" size="9"></td>
-    <td><span class="view">{{ e.shift_name or '-' }} {% if user.role == 'admin' %}<a class="small" href="{{ url_for('employee_edit', eid=e.id) }}#shift-panel">roster</a>{% endif %}</span>
+    <td><span class="view">{{ e.shift_name or '-' }} {% if can_edit %}<a class="small" href="{{ url_for('employee_edit', eid=e.id) }}#shift-panel">roster</a>{% endif %}</span>
       <select class="edit" form="{{ fid }}" name="shift_id">{% for s in shifts %}<option value="{{ s.id }}" {{ 'selected' if s.id == e.shift_id }}>{{ s.name }}</option>{% endfor %}</select></td>
+    {% if can_pay %}
     <td><span class="view">{{ e.salary_type }}</span>
       <select class="edit" form="{{ fid }}" name="salary_type">{% for k in ['monthly','daily','hourly'] %}<option {{ 'selected' if k == e.salary_type }}>{{ k }}</option>{% endfor %}</select></td>
     <td class="n"><span class="view">{% if e.salary_rate %}{{ cur }}{{ e.salary_rate|money }}{% else %}<span class="badge bad">not set</span>{% endif %}</span>
       <input class="edit" form="{{ fid }}" name="salary_rate" type="number" step="0.01" min="0" value="{{ e.salary_rate }}" style="width:95px"></td>
+    {% endif %}
     <td>{% for w in (e.weekly_off or '').split(',') if w %}{{ WEEKDAYS[w|int] }} {% endfor %}</td>
+    {% if can_pay %}
     <td><span class="view">{{ ('x' ~ e.ot_multiplier) if e.ot_enabled else 'No' }}</span>
       <span class="edit" style="white-space:nowrap"><input type="checkbox" form="{{ fid }}" name="ot_enabled" {{ 'checked' if e.ot_enabled }}>
       x<input form="{{ fid }}" name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier }}" style="width:55px"></span></td>
+    {% endif %}
     <td><span class="view">{{ 'paid' if e.paid_break else 'unpaid' }}</span>
       <label class="chk edit"><input type="checkbox" form="{{ fid }}" name="paid_break" {{ 'checked' if e.paid_break }}> paid</label></td>
-    <td>{{ 'PF ' if e.pf_enabled }}{{ 'ESI' if e.esi_enabled }}</td>
+    {% if can_pay %}<td>{{ 'PF ' if e.pf_enabled }}{{ 'ESI' if e.esi_enabled }}</td>{% endif %}
     <td class="small">{{ e.join_date or '' }}</td><td class="small">{{ last.get(e.device_user_id, '') }}</td>
     <td><span class="view">{% if e.active %}<span class="badge ok">active</span>{% else %}<span class="badge">inactive</span>{% endif %}</span>
       <label class="chk edit"><input type="checkbox" form="{{ fid }}" name="active" {{ 'checked' if e.active }}> active</label></td>

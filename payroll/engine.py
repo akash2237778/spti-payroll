@@ -417,12 +417,15 @@ def suggest_penalty(late_min, settings):
     return int(math.floor(per_mark + factor * late_min + 0.5))
 
 
-def load_streams(conn, device_user_ids, start, end, dedup_seconds):
-    """All usable punches per employee from a few days before `start` to a few days after `end`."""
+def load_streams(conn, device_user_ids, start, end, dedup_seconds, machine_only=False):
+    """All usable punches per employee from a few days before `start` to a few days after `end`.
+    machine_only: exactly what the device recorded - no manual punches, no IN/OUT/ignore decisions."""
     lo = dt.datetime.combine(start - dt.timedelta(days=STREAM_MARGIN_DAYS), dt.time())
     hi = dt.datetime.combine(end + dt.timedelta(days=STREAM_MARGIN_DAYS + 1), dt.time())
     q = ("SELECT id, device_user_id, ts, role FROM punches WHERE deleted = 0 AND COALESCE(role, '') != 'ignore' "
          "AND ts BETWEEN ? AND ?")
+    if machine_only:
+        q = "SELECT id, device_user_id, ts, NULL AS role FROM punches WHERE source = 'device' AND ts BETWEEN ? AND ?"
     args = [lo.strftime("%Y-%m-%d %H:%M:%S"), hi.strftime("%Y-%m-%d %H:%M:%S")]
     if device_user_ids is not None:
         q += " AND device_user_id IN (%s)" % ",".join("?" * len(device_user_ids))
@@ -516,12 +519,17 @@ def make_shift_on(assignments, default_shift, shifts):
     return shift_on
 
 
-def employee_days(conn, employees, start, end, settings, today=None):
-    """Compute day records for each employee between start and end (inclusive)."""
+def employee_days(conn, employees, start, end, settings, today=None, machine_only=False):
+    """Compute day records for each employee between start and end (inclusive).
+    machine_only: attendance exactly as the machine data gives it - ignores manual punches, punch decisions,
+    forced statuses, leaves, late penalties and shift-roster changes (holidays still apply)."""
     ctx = load_context(conn, start, end)
+    if machine_only:
+        for k in ("leaves", "overrides", "assignments", "penalties"):
+            ctx[k] = defaultdict(dict) if k != "assignments" else defaultdict(list)
     default_shift = next(iter(ctx["shifts"].values()))
     base_by_uid = {e["device_user_id"]: ctx["shifts"].get(e["shift_id"], default_shift) for e in employees}
-    streams = load_streams(conn, list(base_by_uid), start, end, int(settings.get("dedup_seconds") or 0))
+    streams = load_streams(conn, list(base_by_uid), start, end, int(settings.get("dedup_seconds") or 0), machine_only)
     result = {}
     for e in employees:
         base_shift = base_by_uid[e["device_user_id"]]

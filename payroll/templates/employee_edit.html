@@ -16,29 +16,29 @@
   <div><label>Exit date</label><input type="date" name="exit_date" value="{{ (e.exit_date or '')[:10] }}"></div>
   <div><label>&nbsp;</label><label class="chk"><input type="checkbox" name="active" {{ 'checked' if (e.active if emp else 1) }}> Active</label></div>
 </div></div>
-<div class="card"><h2>Shift &amp; salary</h2><div class="form-grid">
+<div class="card"><h2>{{ "Shift &amp; salary" if can_pay else "Shift &amp; working time" }}</h2><div class="form-grid">
   <div><label>Default shift</label><select name="shift_id">{% for s in shifts %}<option value="{{ s.id }}" {{ 'selected' if s.id == e.shift_id }}>{{ s.name }} ({{ s.start_time }}-{{ s.end_time }})</option>{% endfor %}</select></div>
-  <div><label>Salary type</label><select name="salary_type">
+  {% if can_pay %}  <div><label>Salary type</label><select name="salary_type">
     {% for k, l in [('monthly','Monthly (fixed per month)'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == (e.salary_type or 'monthly') }}>{{ l }}</option>{% endfor %}</select></div>
   <div><label>Rate ({{ cur }} per month / day / hour)</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ e.salary_rate or 0 }}"></div>
-  <div><label>OT multiplier (1 = normal hourly rate, 2 = double)</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier or 1 }}"></div>
+  <div><label>OT multiplier (1 = normal hourly rate, 2 = double)</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier or 1 }}"></div>{% endif %}
   <div><label>Weekly off</label>{% set offs = (e.weekly_off if emp else '6').split(',') %}
     {% for w in WEEKDAYS %}<label class="chk"><input type="checkbox" name="weekly_off" value="{{ loop.index0 }}" {{ 'checked' if (loop.index0|string) in offs }}>{{ w }}</label>{% endfor %}</div>
   <div><label>&nbsp;</label>
-    <label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if (e.ot_enabled if emp else 1) }}> OT eligible</label>
+    {% if can_pay %}<label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if (e.ot_enabled if emp else 1) }}> OT eligible</label>{% endif %}
     <label class="chk" title="Lunch counts as paid time (not deducted); overtime still starts after the shift end"><input type="checkbox" name="paid_break" {{ 'checked' if e.paid_break }}> Paid lunch break</label>
-    <label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if e.pf_enabled }}> PF</label>
-    <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if e.esi_enabled }}> ESI</label></div>
+    {% if can_pay %}<label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if e.pf_enabled }}> PF</label>
+    <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if e.esi_enabled }}> ESI</label>{% endif %}</div>
 </div></div>
-<div class="card"><h2>Bank &amp; statutory</h2><div class="form-grid">
+{% if can_pay %}<div class="card"><h2>Bank &amp; statutory</h2><div class="form-grid">
   <div><label>Bank name</label><input name="bank_name" value="{{ e.bank_name or '' }}"></div>
   <div><label>Account number</label><input name="bank_account" value="{{ e.bank_account or '' }}"></div>
   <div><label>IFSC</label><input name="ifsc" value="{{ e.ifsc or '' }}"></div>
   <div><label>UAN (PF)</label><input name="uan" value="{{ e.uan or '' }}"></div>
   <div><label>ESI number</label><input name="esi_no" value="{{ e.esi_no or '' }}"></div>
   <div><label>Notes</label><input name="notes" value="{{ e.notes or '' }}"></div>
-</div></div>
-{% if user.role == 'admin' %}<button>Save employee</button>{% endif %} <a class="btn light" href="{{ url_for('employees') }}">Cancel</a>
+</div></div>{% endif %}
+{% if can_edit %}<button>Save employee</button>{% endif %} <a class="btn light" href="{{ url_for('employees') }}">Cancel</a>
 </form>
 {% if emp %}{% set panel_from = '' %}{% set panel_open = history|length > 0 %}
 <h2>Shift roster</h2>

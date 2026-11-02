@@ -6,8 +6,8 @@
   <a class="btn light small noprint" href="{{ url_for('export_punches', month=month) }}">Raw punches CSV</a>
   <button class="light small noprint" onclick="window.print()">Print</button>
   <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Print all employee cards</a>
-  <a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a></h1>
-{% if user.role == 'admin' %}
+  {% if can_pay %}<a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a>{% endif %}</h1>
+{% if can_edit %}
 <form method="post" action="{{ url_for('holidays', year=month[:4]) }}" class="row noprint" style="margin-bottom:8px;align-items:center">{{ csrf_field() }}
   <input type="hidden" name="back" value="{{ request.full_path }}"><input type="hidden" name="paid" value="1">
   <span class="small"><b>Add paid holiday:</b></span><input type="date" name="hdate" min="{{ month }}-01" max="{{ dates[-1].isoformat() }}" required>
@@ -25,7 +25,7 @@
     <td class="name"><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.device_user_id }} · {{ r.emp.name }}</a></td>
     {% for d in r.days %}{% set tip = (d.shift.name ~ ' shift · ' if d.shift_changed else '') ~ STATUS_LABELS.get(d.status, '')
         ~ (' ' ~ d['in'].strftime('%H:%M') if d['in'] else '') ~ (' - ' ~ d.out.strftime('%H:%M') if d.out else '')
-        ~ (' (' ~ fmt_min(d.worked_min) ~ ')' if d.worked_min else '') %}<td><a href="{{ url_for('att_day', eid=r.emp.id, date=d.date.isoformat(), back=request.full_path) }}">{{ st(d.status, d.override, tip) }}{% if d.shift_changed %}<sup class="small" title="{{ d.shift.name }} shift">{{ d.shift.name[:1] }}</sup>{% endif %}</a></td>{% endfor %}
+        ~ (' (' ~ fmt_min(d.worked_min) ~ ')' if d.worked_min else '') %}<td><a href="{{ url_for('att_day', eid=r.emp.id, date=d.date.isoformat(), back=request.full_path) }}">{{ st(d.status, d.override or (r.emp.id, d.date) in edited, tip) }}{% if d.shift_changed %}<sup class="small" title="{{ d.shift.name }} shift">{{ d.shift.name[:1] }}</sup>{% endif %}</a></td>{% endfor %}
     <td>{{ s.get('cnt_P',0)|days }}</td><td>{{ s.get('cnt_HD',0)|days }}</td><td>{{ s.get('cnt_A',0)|days }}</td><td>{{ s.get('cnt_WO',0)|days }}</td>
     <td>{{ s.get('cnt_WOP',0)|days }}</td><td>{{ s.get('cnt_MP',0)|days }}</td><td>{{ s.get('late_count',0)|days }}</td>
     <td><b>{{ s.payable_days|days }}</b></td><td>{{ fmt_min(s.worked_min) }}</td><td>{{ fmt_min(s.ot_min) }}</td>

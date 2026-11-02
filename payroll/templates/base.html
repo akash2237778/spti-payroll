@@ -11,16 +11,19 @@
     <a href="{{ url_for('dashboard') }}" class="{{ 'on' if ep=='dashboard' }}">Today</a>
     <a href="{{ url_for('att_monthly') }}" class="{{ 'on' if ep in ('att_monthly','att_employee','att_day') }}">Attendance</a>
     <a href="{{ url_for('exceptions') }}" class="{{ 'on' if ep=='exceptions' }}">Exceptions</a>
+    <a href="{{ url_for('changes_view') }}" class="{{ 'on' if ep=='changes_view' }}">Changes</a>
     <a href="{{ url_for('leaves') }}" class="{{ 'on' if ep=='leaves' }}">Leaves</a>
+    {% if can_pay %}
     <a href="{{ url_for('adjustments') }}" class="{{ 'on' if ep=='adjustments' }}">Advances &amp; Allowances</a>
     <a href="{{ url_for('payroll_view') }}" class="{{ 'on' if ep in ('payroll_view','payslip','payslips') }}">Payroll</a>
+    {% endif %}
     <a href="{{ url_for('employees') }}" class="{{ 'on' if ep.startswith('employee') }}">Employees</a>
     <a href="{{ url_for('shifts') }}" class="{{ 'on' if ep=='shifts' }}">Shifts</a>
     <a href="{{ url_for('holidays') }}" class="{{ 'on' if ep=='holidays' }}">Holidays</a>
     <a href="{{ url_for('devices') }}" class="{{ 'on' if ep=='devices' }}">Devices</a>
     <a href="{{ url_for('settings_view') }}" class="{{ 'on' if ep in ('settings_view','audit_view') }}">Settings</a>
   </nav>
-  <div class="who">{{ user.username }} ({{ user.role }}) · <a href="{{ url_for('logout') }}">Sign out</a></div>
+  <div class="who">{{ user.username }} ({{ ROLES.get(user.role, user.role).split(' - ')[0] }}) · <a href="{{ url_for('logout') }}">Sign out</a></div>
 </header>
 {% endif %}
 <main>

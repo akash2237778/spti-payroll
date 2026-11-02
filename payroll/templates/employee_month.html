@@ -5,7 +5,7 @@
 <h1>{{ emp.name }} <span class="muted small">#{{ emp.device_user_id }} · {{ row.shift.name }} {{ row.shift.start_time }}-{{ row.shift.end_time }}</span>
   <a class="btn small noprint" href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">⇄ Change shift</a>
   <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month, eid=emp.id) }}" target="_blank">🖨 Print statement</a>
-  <a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month, eid=emp.id) }}">Excel with formulas</a>
+  {% if can_pay %}<a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month, eid=emp.id) }}">Excel with formulas</a>{% endif %}
   {{ monthnav('att_employee', month, prev, nxt, eid=emp.id) }}
   <form class="inline noprint"><input type="hidden" name="month" value="{{ month }}">
     <select onchange="location='{{ url_for('att_employee', eid=0) }}'.replace('/0', '/' + this.value) + '?month={{ month }}'">
@@ -24,10 +24,10 @@
   <div class="stat"><span>Hours worked</span><b>{{ fmt_min(s.worked_min) }}</b></div>
   <div class="stat"><span>OT hours</span><b>{{ fmt_min(s.ot_min) }}</b></div>
   <div class="stat ok"><span>Payable days</span><b>{{ s.payable_days|days }}</b></div>
-  <div class="stat ok"><span>Net pay</span><b>{{ cur }}{{ p.net|money }}</b></div>
+  {% if can_pay %}<div class="stat ok"><span>Net pay</span><b>{{ cur }}{{ p.net|money }}</b></div>{% endif %}
 </div>
 {{ legend() }}
-{% set can_pen = user.role == 'admin' and not locked %}
+{% set can_pen = can_edit and not locked %}
 {% if can_pen and s.get('late_count') %}
 <div class="toolbar noprint" style="margin:8px 0 0">
   <span class="small"><b>Late penalty:</b> {{ s.get('late_count',0)|days }} late day(s); {{ s.get('late_penalty_days',0)|days }} penalized,
@@ -43,7 +43,7 @@
   <tr id="d{{ d.date.day }}">
     <td>{{ d.date.strftime('%d %b') }}</td><td>{{ d.date.strftime('%a') }}</td>
     <td class="small">{% if d.shift %}<span class="badge {{ 'warn' if d.shift_changed }}" title="{{ d.shift.start_time }}–{{ d.shift.end_time }}">{{ d.shift.name }}</span>{% endif %}</td>
-    <td>{{ st(d.status, d.override) }}</td>
+    <td>{{ st(d.status, d.override or (emp.id, d.date) in edited) }}{% if (emp.id, d.date) in edited %} <a class="small" href="{{ url_for('changes_view', month=month, eid=emp.id) }}" title="Changed from machine data - see Changes">✎</a>{% endif %}</td>
     <td>{{ d['in'].strftime('%H:%M') if d['in'] else '' }}</td>
     <td>{{ d.out.strftime('%H:%M') if d.out else '' }}{{ ' (+1)' if d.out and d.out.date() > d.date }}</td>
     <td class="n">{{ fmt_min(d.worked_min) if d.worked_min else '' }}</td>
@@ -66,7 +66,7 @@
     <td class="small muted">{% for t in d.punches %}{{ t.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}</td>
     <td class="small">{{ d.holiday or '' }} {{ d.leave_type or '' }} {% for f in d.flags %}<span class="badge warn">{{ f }}</span> {% endfor %}</td>
     <td style="white-space:nowrap" class="noprint">
-      {% if not locked and user.role == 'admin' %}
+      {% if not locked and can_edit %}
         {% if d.suggest %}{% set orphan = (d.sessions|selectattr('orphan')|first) %}
         <form method="post" action="{{ url_for('att_day', eid=emp.id, date=d.date.isoformat()) }}" class="inline">{{ csrf_field() }}
           <input type="hidden" name="action" value="apply_suggest"><input type="hidden" name="back" value="{{ request.full_path }}#d{{ d.date.day }}">
@@ -78,7 +78,7 @@
       {% endif %}
       <a class="small" href="{{ url_for('att_day', eid=emp.id, date=d.date.isoformat(), back=request.full_path) }}">details</a></td>
   </tr>
-  {% if not locked and user.role == 'admin' %}
+  {% if not locked and can_edit %}
   {% set sh_start, sh_end = shift_times(d.date, d.shift) %}
   {% set qin = d['in'] or (d.suggest.ts if d.suggest and d.suggest.role == 'in' else sh_start) %}
   {% set qout = d.out or (d.suggest.ts if d.suggest and d.suggest.role == 'out' else sh_end) %}
@@ -101,6 +101,7 @@
   {% endif %}
   {% endfor %}
 </table></div>
+{% if can_pay %}
 <div class="card" style="margin-top:14px"><h2>Salary preview ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>
   <table style="max-width:560px">
     <tr><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
@@ -115,4 +116,5 @@
   </table>
   {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee. <a href="{{ url_for('employee_edit', eid=emp.id) }}">Set it here.</a></p>{% endif %}
 </div>
+{% endif %}
 {% endblock %}

@@ -6,7 +6,7 @@
   <form class="inline"><input type="date" name="date" value="{{ day.isoformat() }}" onchange="this.form.submit()"></form>
   <a class="btn light small" href="{{ url_for('dashboard', date=nxt) }}">&rarr;</a></span>
   {% if holiday %}<span class="badge {{ 'ok' if holiday.paid else '' }}">{{ 'Paid' if holiday.paid else 'Unpaid' }} holiday: {{ holiday.name }}</span>
-  {% elif user.role == 'admin' %}
+  {% elif can_edit %}
   <form method="post" action="{{ url_for('holidays', year=day.year) }}" class="inline noprint" onsubmit="var n = prompt('Holiday name', 'National holiday'); this.elements['name'].value = n || ''; return !!n">
     {{ csrf_field() }}<input type="hidden" name="hdate" value="{{ day.isoformat() }}"><input type="hidden" name="name"><input type="hidden" name="paid" value="1">
     <input type="hidden" name="back" value="{{ request.full_path }}"><button class="light small">Mark as paid holiday</button></form>
@@ -29,7 +29,7 @@
     {% endfor %}
       <div class="small muted">{{ total_punches }} punches stored · latest punch {{ last_punch or '-' }}</div>
     </div>
-    {% if user.role == 'admin' %}{% for d in devices %}
+    {% if can_edit %}{% for d in devices %}
     <form method="post" action="{{ url_for('device_action', did=d.id, action='sync') }}">{{ csrf_field() }}
       <input type="hidden" name="back" value="{{ request.full_path }}"><button>Sync {{ d.name }} now</button></form>
     {% endfor %}{% endif %}
@@ -41,7 +41,7 @@
   <tr>
     <td>{{ e.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=e.id, month=day.strftime('%Y-%m')) }}">{{ e.name }}</a></td>
     <td class="small">{{ e.department }}</td>
-    <td>{{ st(r.status, r.override) }} {% for f in r.flags %}<span class="badge warn">{{ f }}</span>{% endfor %}</td>
+    <td>{{ st(r.status, r.override or (e.id, day) in edited) }} {% for f in r.flags %}<span class="badge warn">{{ f }}</span>{% endfor %}</td>
     <td>{{ r['in'].strftime('%H:%M') if r['in'] else '' }}</td><td>{{ r.out.strftime('%H:%M') if r.out else '' }}</td>
     <td class="n">{{ fmt_min(r.worked_min) if r.worked_min else '' }}</td>
     <td class="n">{{ r.late_min ~ 'm' if r.late_min else '' }}</td><td class="n">{{ r.early_min ~ 'm' if r.early_min else '' }}</td>

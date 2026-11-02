@@ -2,8 +2,9 @@
 {% block title %}Settings{% endblock %}
 {% block body %}
 {% set s = settings %}
-<h1>Settings <a class="btn light small" href="{{ url_for('audit_view') }}">Audit log</a>
-  {% if user.role == 'admin' %}<a class="btn light small" href="{{ url_for('backup') }}">Download database backup</a>{% endif %}</h1>
+<h1>Settings {% if is_admin %}<a class="btn light small" href="{{ url_for('audit_view') }}">Audit log</a>{% endif %}
+  {% if is_admin %}<a class="btn light small" href="{{ url_for('backup') }}">Download database backup</a>{% endif %}</h1>
+{% if is_admin %}
 <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="settings">
 <div class="card"><h2>Company</h2><div class="form-grid">
   <div><label>Company name</label><input name="company_name" value="{{ s.company_name }}"></div>
@@ -53,18 +54,34 @@
   <div><label>Employee ESI %</label><input name="esi_rate" value="{{ s.esi_rate }}"></div>
   <div><label>ESI applies if gross ≤ ({{ cur }})</label><input name="esi_gross_ceiling" value="{{ s.esi_gross_ceiling }}"></div>
 </div></div>
-{% if user.role == 'admin' %}<button>Save settings</button>{% endif %}
+{% if is_admin %}<button>Save settings</button>{% endif %}
 </form>
+{% endif %}
 <div class="row" style="align-items:flex-start;margin-top:14px">
-<div class="card grow"><h2>Users</h2>
-  <table>{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.role }}</td><td class="small muted">{{ u.created_at }}</td>
-    <td>{% if user.role == 'admin' and u.id != user.id %}<form method="post" class="inline" onsubmit="return confirm('Delete user?')">{{ csrf_field() }}<input type="hidden" name="action" value="delete_user"><input type="hidden" name="uid" value="{{ u.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>{% endfor %}</table>
-  {% if user.role == 'admin' %}
+{% if is_admin %}<div class="card grow"><h2>Users &amp; roles</h2>
+  <p class="small muted" style="margin-top:0"><b>Admin</b>: everything, including salaries, payroll, settings and users.
+  <b>HR</b>: all attendance work (corrections, leaves, holidays, shifts, employees) but no salary, payroll, advances or bank details anywhere.
+  <b>Viewer</b>: read-only attendance, no salaries.</p>
+  <table>
+    <tr><th>User</th><th>Role</th><th>Created</th>{% if is_admin %}<th>Reset password</th><th></th>{% endif %}</tr>
+    {% for u in users %}<tr><td>{{ u.username }}{{ ' (you)' if u.id == user.id }}</td>
+    <td>{% if is_admin %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="action" value="set_role"><input type="hidden" name="uid" value="{{ u.id }}">
+        <select name="role" onchange="this.form.submit()">{% for k, label in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if k == u.role }}>{{ label }}</option>{% endfor %}</select></form>
+      {% else %}{{ ROLES.get(u.role, u.role) }}{% endif %}</td>
+    <td class="small muted">{{ u.created_at }}</td>
+    {% if is_admin %}
+    <td><form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="action" value="reset_password"><input type="hidden" name="uid" value="{{ u.id }}">
+      <input type="password" name="password" placeholder="new password" size="12" required><button class="light small">Set</button></form></td>
+    <td>{% if u.id != user.id %}<form method="post" class="inline" onsubmit="return confirm('Delete user {{ u.username }}?')">{{ csrf_field() }}<input type="hidden" name="action" value="delete_user"><input type="hidden" name="uid" value="{{ u.id }}"><button class="danger small">Delete</button></form>{% endif %}</td>
+    {% endif %}</tr>{% endfor %}
+  </table>
+  {% if is_admin %}
   <form method="post" class="row" style="margin-top:10px">{{ csrf_field() }}<input type="hidden" name="action" value="add_user">
     <div><label>Username</label><input name="username" required></div><div><label>Password</label><input type="password" name="password" required></div>
-    <div><label>Role</label><select name="role"><option value="viewer">viewer (read only)</option><option value="admin">admin</option></select></div>
+    <div><label>Role</label><select name="role">{% for k, label in ROLES.items() %}<option value="{{ k }}" {{ 'selected' if k == 'hr' }}>{{ label }}</option>{% endfor %}</select></div>
     <button>Add user</button></form>{% endif %}
 </div>
+{% endif %}
 <div class="card grow"><h2>Change my password</h2>
   <form method="post" action="{{ url_for('change_password') }}">{{ csrf_field() }}
     <label>Current password</label><input type="password" name="old" required>

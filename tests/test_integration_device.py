@@ -13,7 +13,7 @@ import socket
 
 import pytest
 
-from payroll import db
+from payroll import db, engine
 
 DEVICE_IP = os.environ.get("DEVICE_IP", "192.168.2.56")
 
@@ -311,13 +311,97 @@ def test_end_to_end(client):
     total_x = xl.evaluate(f"Payroll!V{4 + len(rows)}")
     assert abs(total_x - sum(r["pay"]["net"] for r in rows)) < 1
 
-    # 9. viewer role cannot change things
+    # 9. Changes page: every manual change vs machine data, with undo
+    r = c.get("/changes?month=2026-10")
+    assert r.status_code == 200
+    page = r.data.decode()
+    for label in ("Punch added", "Punch ignored", "Day status forced", "Late penalty", "Holiday"):
+        assert label in page, label
+    with db.tx() as conn:
+        manual = conn.execute("SELECT id FROM punches WHERE source='manual' AND ts LIKE '2026-10-21%'").fetchall()
+        ignored = conn.execute("SELECT id FROM punches WHERE role='ignore' AND ts LIKE '2026-10-21%'").fetchall()
+        forced = conn.execute("SELECT id FROM day_overrides WHERE work_date='2026-10-20'").fetchone()
+    assert manual and ignored and forced
+    # machine view vs current view for the corrected day (Oct 21: machine 13:55-22:14, now 09:00-21:00)
+    assert "13:55–22:14" in page and "09:00–21:00" in page
+    # edited days are outlined on the muster roll / employee month
+    assert page.count("Undo") >= 5
+    em = c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "st-P ov" in em and "Changed from machine data" in em
+    # undo the forced status and one ignored punch -> machine data applies again
+    post(c, "/changes/undo", kind="status", id=str(forced["id"]))
+    post(c, "/changes/undo", kind="punch_role", id=str(ignored[0]["id"]))
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM day_overrides WHERE id=?", (forced["id"],)).fetchone()
+        assert conn.execute("SELECT role FROM punches WHERE id=?", (ignored[0]["id"],)).fetchone()["role"] is None
+        assert conn.execute("SELECT action FROM audit_log WHERE action='change_undo'").fetchone()
+    with db.tx() as conn:   # machine-only view really ignores people's changes
+        e = dict(conn.execute("SELECT * FROM employees WHERE id=?", (kam,)).fetchone())
+        mo = engine.employee_days(conn, [e], dt.date(2026, 10, 21), dt.date(2026, 10, 21), db.get_settings(conn), machine_only=True)
+    assert mo[kam]["days"][0]["in"].strftime("%H:%M") == "13:55"
+
+    # 10. roles: HR does attendance but never sees money; viewer read-only; admin everything
+    post(c, "/settings", action="add_user", username="hr1", password="hrpass123", role="hr")
     post(c, "/settings", action="add_user", username="viewer1", password="viewer123", role="viewer")
-    c.get("/logout")
-    with c.session_transaction() as s:
-        s["csrf"] = "t"
-    post(c, "/login", username="viewer1", password="viewer123")
-    with c.session_transaction() as s:
-        s["csrf"] = "t"
-    assert c.get(f"/payroll?month={month}").status_code == 200
+    with db.tx() as conn:
+        rate_before = conn.execute("SELECT salary_rate, salary_type, bank_account FROM employees WHERE id=?", (kam,)).fetchone()
+
+    def login_as(u, pw):
+        c.get("/logout")
+        with c.session_transaction() as s:
+            s["csrf"] = "t"
+        post(c, "/login", username=u, password=pw)
+        with c.session_transaction() as s:
+            s["csrf"] = "t"
+
+    login_as("hr1", "hrpass123")
+    money_pages = [f"/payroll?month={month}", f"/payslips?month={month}", f"/payslip/{kam}?month={month}",
+                   f"/export/payroll.csv?month={month}", f"/export/payroll.xlsx?month={month}", f"/export/bank.csv?month={month}",
+                   f"/export/payroll_formulas.xlsx?month={month}", f"/adjustments?month={month}", "/employees/bulk", "/audit", "/backup"]
+    for pth in money_pages:
+        assert c.get(pth).status_code == 403, pth
     assert post(c, f"/payroll?month={month}", action="finalize").status_code == 403
+    assert post(c, f"/adjustments?month={month}", employee_id=str(kam), kind="bonus", amount="999").status_code == 403
+    assert post(c, "/settings", action="settings", pf_rate="50").status_code == 403
+    # pages HR uses show no money: no rupee amounts, no rate/net/salary words
+    for pth in ("/", "/employees", f"/employees/{kam}", f"/attendance/employee/{kam}?month=2026-10", "/attendance/monthly?month=2026-10",
+                f"/reports/attendance?month=2026-10&eid={kam}", "/changes?month=2026-10", "/settings", "/exceptions?month=2026-10"):
+        r = c.get(pth)
+        assert r.status_code == 200, pth
+        html = r.data.decode()
+        for bad in ("16,000", "Net pay", "Salary preview", "Bulk edit salaries", "Account number", "Payroll</a>", "Basic earned"):
+            assert bad not in html, (pth, bad)
+    exp = c.get("/employees/export.csv").data.decode()
+    assert "salary_rate" not in exp and "bank_account" not in exp
+    # HR can do attendance work...
+    assert post(c, f"/attendance/day/{kam}/2026-10-22", action="override", status="HD", reason="hr check").status_code == 200
+    assert post(c, "/leaves?month=2026-10", employee_id=str(kam), **{"from": "2026-10-23"}, leave_type="SL", paid="on").status_code == 200
+    # ...and edit employees without touching pay, even if a crafted form sends pay fields
+    post(c, f"/employees/{kam}/quick", name="HR renamed", department="Stores", designation="", shift_id="1",
+         salary_type="hourly", salary_rate="1", ot_multiplier="5", active="on")
+    post(c, f"/employees/{kam}", device_user_id="12", emp_code="12", name="HR renamed 2", department="Stores", shift_id="1",
+         salary_type="daily", salary_rate="2", bank_account="999", active="on", weekly_off="6")
+    with db.tx() as conn:
+        after = conn.execute("SELECT name, salary_rate, salary_type, bank_account FROM employees WHERE id=?", (kam,)).fetchone()
+        audit_hr = [r["detail"] for r in conn.execute("SELECT detail FROM audit_log WHERE username='hr1'")]
+    assert after["name"] == "HR renamed 2"
+    assert (after["salary_rate"], after["salary_type"], after["bank_account"]) == tuple(rate_before), "HR must not change pay"
+    assert not any("rate" in d for d in audit_hr)
+    # HR change shows up on the Changes page attributed to hr1
+    assert "hr1" in c.get("/changes?month=2026-10&by=hr1").data.decode()
+
+    login_as("viewer1", "viewer123")
+    assert c.get(f"/payroll?month={month}").status_code == 403
+    assert c.get("/changes?month=2026-10").status_code == 200
+    assert post(c, f"/attendance/day/{kam}/2026-10-24", action="override", status="A", reason="x").status_code == 403
+    assert post(c, "/changes/undo", kind="leave", id="1").status_code == 403
+
+    login_as("admin", "secret123")
+    assert c.get(f"/payroll?month={month}").status_code == 200
+    assert "16,000" in c.get("/employees").data.decode()
+    # the last admin cannot be demoted
+    with db.tx() as conn:
+        me = conn.execute("SELECT id FROM app_users WHERE username='admin'").fetchone()["id"]
+    post(c, "/settings", action="set_role", uid=str(me), role="hr")
+    with db.tx() as conn:
+        assert conn.execute("SELECT role FROM app_users WHERE id=?", (me,)).fetchone()["role"] == "admin"

@@ -18,7 +18,7 @@
 </div>
 {% set panel_from = d.isoformat() %}{% set panel_to = d.isoformat() %}{% set panel_open = false %}
 {% include "_shift_panel.html" %}
-{% set ro = locked or user.role != 'admin' %}
+{% set ro = locked or not can_edit %}
 <div class="row" style="align-items:stretch">
 <div class="card grow">
   <h2>Correct this shift (one step)</h2>

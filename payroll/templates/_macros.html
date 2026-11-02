@@ -8,5 +8,5 @@
 {%- endmacro %}
 {% macro csrf_field() %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
 {% macro legend() %}
-<div class="legend small muted">{% for k in ['P','HD','A','MP','WO','WOP','H','HP','L','LWP'] %}<span>{{ st(k) }} {{ STATUS_LABELS[k] }}</span>{% endfor %}<span><span class="st ov">&nbsp;</span> Manually corrected</span></div>
+<div class="legend small muted">{% for k in ['P','HD','A','MP','WO','WOP','H','HP','L','LWP'] %}<span>{{ st(k) }} {{ STATUS_LABELS[k] }}</span>{% endfor %}<span><span class="st ov">&nbsp;</span> Changed from machine data (<a href="{{ url_for('changes_view') }}">see Changes</a>)</span></div>
 {% endmacro %}

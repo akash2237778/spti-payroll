@@ -150,7 +150,10 @@ def init_db():
     with tx() as c:
         c.executescript(SCHEMA)
         for table, col, ddl in (("punches", "role", "TEXT"), ("shifts", "break_start", "TEXT"),
-                                ("employees", "paid_break", "INTEGER DEFAULT 0")):
+                                ("employees", "paid_break", "INTEGER DEFAULT 0"),
+                                # who/when a punch was added or re-roled by a person (machine punches stay NULL)
+                                ("punches", "changed_by", "TEXT"), ("punches", "changed_at", "TEXT"),
+                                ("leaves", "created_by", "TEXT"), ("leaves", "created_at", "TEXT")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

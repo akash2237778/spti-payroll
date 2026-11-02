@@ -10,7 +10,7 @@ from flask import (Flask, Response, abort, flash, g, redirect, render_template, 
                    url_for)
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from . import db, device, engine, payroll, reports
+from . import changes as chg, db, device, engine, payroll, reports
 
 app = Flask(__name__)
 
@@ -87,16 +87,66 @@ def teardown(exc):
 @app.context_processor
 def inject():
     return {"user": g.get("user"), "settings": g.get("settings", {}), "csrf": session.get("csrf"),
-            "cur": g.get("settings", {}).get("currency", "₹")}
+            "cur": g.get("settings", {}).get("currency", "₹"),
+            "can_pay": can_pay(), "can_edit": can_edit(), "is_admin": is_admin(), "ROLES": ROLES}
 
 
-def admin_required(fn):
-    @functools.wraps(fn)
-    def wrapper(*a, **kw):
-        if not g.user or g.user["role"] != "admin":
-            abort(403, "Admin access required")
-        return fn(*a, **kw)
-    return wrapper
+# ------------------------------------------------------------------ roles
+# admin  : everything, including salaries, payroll, settings and users
+# hr     : all attendance work (punch fixes, leaves, holidays, shifts, employees) but no money anywhere
+# viewer : read-only attendance, no money
+ROLES = {"admin": "Admin - everything", "hr": "HR - attendance, no salaries", "viewer": "Viewer - read only, no salaries"}
+PAY_ROLES = {"admin"}
+EDIT_ROLES = {"admin", "hr"}
+# Employee fields only someone who may see pay can read or change.
+PAY_FIELDS = ["salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled",
+              "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"]
+
+
+def _role():
+    return g.user["role"] if g.get("user") else None
+
+
+def is_admin():
+    return _role() == "admin"
+
+
+def can_pay():
+    return _role() in PAY_ROLES
+
+
+def can_edit():
+    return _role() in EDIT_ROLES
+
+
+def require_admin():
+    if not is_admin():
+        abort(403, "Admin access required")
+
+
+def require_pay():
+    if not can_pay():
+        abort(403, "Salary information is restricted to admin users")
+
+
+def require_edit():
+    if not can_edit():
+        abort(403, "Your account is read-only")
+
+
+def _guard(check):
+    def deco(fn):
+        @functools.wraps(fn)
+        def wrapper(*a, **kw):
+            check()
+            return fn(*a, **kw)
+        return wrapper
+    return deco
+
+
+admin_required = _guard(require_admin)
+pay_required = _guard(require_pay)
+edit_required = _guard(require_edit)
 
 
 def audit(action, detail=""):
@@ -199,6 +249,7 @@ def dashboard():
     total_punches = g.conn.execute("SELECT COUNT(*) FROM punches").fetchone()[0]
     holiday = g.conn.execute("SELECT * FROM holidays WHERE hdate = ?", (day.isoformat(),)).fetchone()
     return render_template("dashboard.html", rows=rows, stats=stats, day=day, devices=devices, holiday=holiday,
+                           edited=edited_set(day, day),
                            last_punch=last_punch, total_punches=total_punches,
                            prev=(day - dt.timedelta(days=1)).isoformat(), nxt=(day + dt.timedelta(days=1)).isoformat())
 
@@ -208,8 +259,7 @@ def dashboard():
 @app.route("/devices", methods=["GET", "POST"])
 def devices():
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_admin()
         f = request.form
         if f.get("id"):
             g.conn.execute("UPDATE devices SET name=?, ip=?, port=?, password=?, active=? WHERE id=?",
@@ -225,11 +275,13 @@ def devices():
 
 
 @app.route("/devices/<int:did>/<action>", methods=["POST"])
-@admin_required
+@edit_required
 def device_action(did, action):
     dev = g.conn.execute("SELECT * FROM devices WHERE id = ?", (did,)).fetchone() or abort(404)
     g.conn.commit()  # release locks before the long sync opens its own connection
     try:
+        if action in ("settime", "delete"):
+            require_admin()
         if action == "test":
             info = device.test_connection(dev)
             flash(f"Connected: serial {info['serial']}, firmware {info['firmware']}, {info['users']} users, device time {info['device_time']}", "ok")
@@ -272,25 +324,31 @@ def employees():
 
 
 @app.route("/employees/<int:eid>/quick", methods=["POST"])
-@admin_required
+@edit_required
 def employee_quick(eid):
     """Inline edit from the employees list: the handful of fields people change often."""
     emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
     f = request.form
     name = f.get("name", "").strip() or emp["name"]
-    stype = f.get("salary_type") if f.get("salary_type") in ("monthly", "daily", "hourly") else emp["salary_type"]
-    try:
-        rate = float(f.get("salary_rate") or 0)
-        mult = float(f.get("ot_multiplier") or 1)
-    except ValueError:
-        flash("Rate and OT multiplier must be numbers", "error")
-        return redirect(request.referrer or url_for("employees"))
+    if can_pay():
+        stype = f.get("salary_type") if f.get("salary_type") in ("monthly", "daily", "hourly") else emp["salary_type"]
+        try:
+            rate = float(f.get("salary_rate") or 0)
+            mult = float(f.get("ot_multiplier") or 1)
+        except ValueError:
+            flash("Rate and OT multiplier must be numbers", "error")
+            return redirect(request.referrer or url_for("employees"))
+        ot_on = 1 if f.get("ot_enabled") else 0
+    else:  # HR / viewer: pay fields are neither shown nor changeable
+        stype, rate, mult, ot_on = emp["salary_type"], emp["salary_rate"], emp["ot_multiplier"], emp["ot_enabled"]
     vals = (name, f.get("department", "").strip(), f.get("designation", "").strip(), int(f.get("shift_id") or 0) or None,
-            stype, rate, 1 if f.get("ot_enabled") else 0, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, eid)
+            stype, rate, ot_on, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, eid)
     g.conn.execute("""UPDATE employees SET name=?, department=?, designation=?, shift_id=?, salary_type=?, salary_rate=?,
                       ot_enabled=?, ot_multiplier=?, active=?, paid_break=? WHERE id=?""", vals)
-    audit("employee_quick_edit", {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "type": stype, "rate": rate,
-                                  "ot": vals[6], "mult": mult, "active": vals[8], "paid_break": vals[9]})
+    detail = {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "active": vals[8], "paid_break": vals[9]}
+    if can_pay():
+        detail.update(type=stype, rate=rate, ot=ot_on, mult=mult)
+    audit("employee_quick_edit", detail)
     flash(f"Saved {name}", "ok")
     back = f.get("back", "")
     return redirect((back if back.startswith("/") and not back.startswith("//") else url_for("employees")) + f"#emp-{eid}")
@@ -303,8 +361,7 @@ def employee_edit(eid):
     if eid:
         emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         vals = {k: (f.get(k, "").strip() or None) for k in EMP_FIELDS}
         if not vals["name"] or not vals["device_user_id"]:
@@ -319,6 +376,9 @@ def employee_edit(eid):
         vals["weekly_off"] = ",".join(f.getlist("weekly_off"))
         for k in ("department", "designation", "phone", "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"):
             vals[k] = vals[k] or ""
+        if not can_pay():
+            for k in PAY_FIELDS:  # HR cannot see or change pay; existing values stay, new hires get defaults
+                vals.pop(k, None)
         cols = list(vals)
         try:
             if eid:
@@ -329,7 +389,10 @@ def employee_edit(eid):
         except Exception as e:
             flash(f"Could not save: {e}", "error")
             return redirect(request.url)
-        audit("employee_save", {"id": eid, "name": vals["name"], "rate": vals["salary_rate"], "type": vals["salary_type"]})
+        detail = {"id": eid, "name": vals["name"]}
+        if can_pay():
+            detail.update(rate=vals["salary_rate"], type=vals["salary_type"])
+        audit("employee_save", detail)
         flash("Employee saved", "ok")
         return redirect(url_for("employees"))
     shifts = g.conn.execute("SELECT * FROM shifts").fetchall()
@@ -351,7 +414,7 @@ def _ensure_range_unlocked(from_date, to_date):
 
 
 @app.route("/employees/<int:eid>/shifts", methods=["POST"])
-@admin_required
+@edit_required
 def employee_shifts(eid):
     """Dated shift roster. Several changes per month are allowed; on overlap the newest entry wins."""
     emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
@@ -369,15 +432,15 @@ def employee_shifts(eid):
             return redirect(f.get("back") or url_for("att_employee", eid=eid))
         _ensure_range_unlocked(frm, to)
         shift = g.conn.execute("SELECT * FROM shifts WHERE id = ?", (int(f["shift_id"]),)).fetchone() or abort(400)
-        g.conn.execute("INSERT INTO employee_shifts(employee_id, shift_id, from_date, to_date, reason, created_by) VALUES (?,?,?,?,?,?)",
-                       (eid, shift["id"], frm, to, f.get("reason", ""), g.user["username"]))
+        g.conn.execute("INSERT INTO employee_shifts(employee_id, shift_id, from_date, to_date, reason, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                       (eid, shift["id"], frm, to, f.get("reason", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
         audit("shift_assign", {"emp": eid, "name": emp["name"], "shift": shift["name"], "from": frm, "to": to, "reason": f.get("reason")})
         flash(f"{emp['name']}: {shift['name']} shift from {frm}{' to ' + to if to else ' onwards'}. Punches re-paired.", "ok")
     return redirect(f.get("back") or url_for("att_employee", eid=eid))
 
 
 @app.route("/employees/bulk", methods=["GET", "POST"])
-@admin_required
+@pay_required
 def employees_bulk():
     """Quick grid to set salary type/rate/OT/PF/ESI for many employees at once."""
     if request.method == "POST":
@@ -431,7 +494,7 @@ def employees_import():
 @app.route("/employees/export.csv")
 def employees_export():
     rows = g.conn.execute("SELECT * FROM employees ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
-    cols = EMP_FIELDS + EMP_FLAGS + ["weekly_off"]
+    cols = [c for c in EMP_FIELDS + EMP_FLAGS + ["weekly_off"] if can_pay() or c not in PAY_FIELDS]
     return csv_response("employees.csv", cols, [[r[c] for c in cols] for r in rows])
 
 
@@ -440,8 +503,7 @@ def employees_export():
 @app.route("/shifts", methods=["GET", "POST"])
 def shifts():
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         ints = ["break_min", "break_after_min", "grace_in_min", "grace_out_min", "ot_after_min", "ot_round_min", "day_start_hour"]
         vals = [f["name"], f["start_time"], f["end_time"]] + [int(f.get(k) or 0) for k in ints] + \
@@ -466,8 +528,7 @@ NATIONAL_HOLIDAYS = [("01-26", "Republic Day"), ("08-15", "Independence Day"), (
 def holidays():
     year = request.args.get("year") or str(dt.date.today().year)
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         if f.get("delete"):
             h = g.conn.execute("SELECT * FROM holidays WHERE id = ?", (int(f["delete"]),)).fetchone() or abort(404)
@@ -509,7 +570,8 @@ def att_monthly():
     dates = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
     prev, nxt = month_nav(month)
     hol = {r["hdate"]: r for r in g.conn.execute("SELECT * FROM holidays WHERE hdate LIKE ?", (month + "%",))}
-    return render_template("muster.html", rows=rows, dates=dates, month=month, prev=prev, nxt=nxt, hol=hol)
+    return render_template("muster.html", rows=rows, dates=dates, month=month, prev=prev, nxt=nxt, hol=hol,
+                           edited=edited_set(start, end))
 
 
 @app.route("/attendance/employee/<int:eid>")
@@ -528,7 +590,9 @@ def att_employee(eid):
     prev, nxt = month_nav(month)
     locked = payroll.run_status(g.conn, month) == "final"
     others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    m_start, m_end = engine.month_range(month)
     return render_template("employee_month.html", row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
+                           edited=edited_set(m_start, m_end, eid),
                            history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
 
 
@@ -547,17 +611,22 @@ def add_manual_punch(emp, ts, role, reason):
     ensure_unlocked(_punch_work_date(emp, ts))
     s = ts.strftime(TS_FMT)
     note = f"by {g.user['username']}: {reason}"
-    cur = g.conn.execute("INSERT OR IGNORE INTO punches(device_user_id, ts, source, note, role) VALUES (?,?, 'manual', ?, ?)",
-                         (emp["device_user_id"], s, note, role))
+    now = dt.datetime.now().strftime(TS_FMT)
+    cur = g.conn.execute("""INSERT OR IGNORE INTO punches(device_user_id, ts, source, note, role, changed_by, changed_at)
+                            VALUES (?,?, 'manual', ?, ?, ?, ?)""", (emp["device_user_id"], s, note, role, g.user["username"], now))
     if not cur.rowcount:
-        g.conn.execute("UPDATE punches SET role=?, deleted=0 WHERE device_user_id=? AND ts=?", (role, emp["device_user_id"], s))
+        g.conn.execute("UPDATE punches SET role=?, deleted=0, changed_by=?, changed_at=?, note=CASE WHEN source='device' THEN ? ELSE note END "
+                       "WHERE device_user_id=? AND ts=?", (role, g.user["username"], now, note, emp["device_user_id"], s))
     audit("punch_add", {"emp": emp["id"], "ts": s, "role": role, "reason": reason})
 
 
-def set_punch_role(emp, punch_id, role):
+def set_punch_role(emp, punch_id, role, reason=None):
     p = g.conn.execute("SELECT * FROM punches WHERE id=? AND device_user_id=?", (punch_id, emp["device_user_id"])).fetchone() or abort(404)
     ensure_unlocked(_punch_work_date(emp, dt.datetime.strptime(p["ts"], TS_FMT)))
-    g.conn.execute("UPDATE punches SET role=? WHERE id=?", (role or None, punch_id))
+    g.conn.execute("UPDATE punches SET role=?, changed_by=?, changed_at=? WHERE id=?",
+                   (role or None, g.user["username"] if role else None, dt.datetime.now().strftime(TS_FMT) if role else None, punch_id))
+    if reason is not None and p["source"] == "device":
+        g.conn.execute("UPDATE punches SET note=? WHERE id=?", (f"by {g.user['username']}: {reason}" if role else "", punch_id))
     audit("punch_role", {"emp": emp["id"], "ts": p["ts"], "role": role or "auto"})
 
 
@@ -570,7 +639,7 @@ def fix_shift(emp, work_date, tin, tout, reason):
     for sess in rec["sessions"]:
         for pid, ts in zip(sess["ids"], sess["punches"]):
             if pid and (ts < tin or ts > tout):
-                set_punch_role(emp, pid, "ignore")
+                set_punch_role(emp, pid, "ignore", f"replaced by corrected shift {tin:%H:%M}-{tout:%H:%M}" + (f" ({reason})" if reason else ""))
     g.conn.execute("UPDATE punches SET role=NULL WHERE device_user_id=? AND ts > ? AND ts < ? AND role IN ('in','out')",
                    (emp["device_user_id"], tin.strftime(TS_FMT), tout.strftime(TS_FMT)))
     add_manual_punch(emp, tin, "in", reason)
@@ -584,7 +653,7 @@ def _dtl(v):
 
 
 @app.route("/attendance/employee/<int:eid>/penalty", methods=["POST"])
-@admin_required
+@edit_required
 def late_penalty(eid):
     """Late-comer penalty, chosen day by day on the employee's sheet: OT minutes removed for that day."""
     emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
@@ -600,8 +669,9 @@ def late_penalty(eid):
             if f["action"] == "clear_all":
                 n += g.conn.execute("DELETE FROM late_penalties WHERE employee_id=? AND work_date=?", (eid, ds)).rowcount
             elif d["late_min"] and not d["late_penalty_set"] and d["late_penalty_suggest"] > 0:
-                g.conn.execute("INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by) VALUES (?,?,?,?,?)",
-                               (eid, ds, d["late_penalty_suggest"], f"late {d['late_min']}m", g.user["username"]))
+                g.conn.execute("INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by, created_at) VALUES (?,?,?,?,?,?)",
+                               (eid, ds, d["late_penalty_suggest"], f"late {d['late_min']}m", g.user["username"],
+                                dt.datetime.now().strftime(TS_FMT)))
                 n += 1
         audit("late_penalty_" + f["action"], {"emp": eid, "month": month, "days": n})
         flash(f"{'Removed' if f['action'] == 'clear_all' else 'Applied'} late penalty on {n} day(s)", "ok")
@@ -612,9 +682,10 @@ def late_penalty(eid):
         except ValueError:
             minutes = 0
         if minutes > 0:
-            g.conn.execute("""INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by) VALUES (?,?,?,?,?)
-                              ON CONFLICT(employee_id, work_date) DO UPDATE SET minutes=excluded.minutes, created_by=excluded.created_by""",
-                           (eid, ds, minutes, f.get("note", ""), g.user["username"]))
+            g.conn.execute("""INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by, created_at) VALUES (?,?,?,?,?,?)
+                              ON CONFLICT(employee_id, work_date) DO UPDATE SET minutes=excluded.minutes, created_by=excluded.created_by,
+                              created_at=excluded.created_at""",
+                           (eid, ds, minutes, f.get("note", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
         else:
             g.conn.execute("DELETE FROM late_penalties WHERE employee_id=? AND work_date=?", (eid, ds))
         audit("late_penalty", {"emp": eid, "date": ds, "minutes": minutes})
@@ -627,8 +698,7 @@ def att_day(eid, date):
     emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
     d = dt.date.fromisoformat(date)
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         act = f.get("action")
         if act in ("override", "clear_override", "leave", "clear_leave"):
@@ -638,16 +708,18 @@ def att_day(eid, date):
             if not status:
                 g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
             else:
-                g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by)
-                                  VALUES (?,?,?,NULL,NULL,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"]))
+                g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by, created_at)
+                                  VALUES (?,?,?,NULL,NULL,?,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"],
+                                                                     dt.datetime.now().strftime(TS_FMT)))
             audit("day_override", {"emp": eid, "date": date, "status": status, "reason": f.get("reason")})
         elif act == "clear_override":
             g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
             audit("day_override_clear", {"emp": eid, "date": date})
         elif act == "leave":
-            g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason)
-                              VALUES (?,?,?,?,?,?)""", (eid, date, f.get("leave_type", "CL"), 1 if f.get("paid") else 0,
-                                                       1 if f.get("half_day") else 0, f.get("reason", "")))
+            g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason, created_by, created_at)
+                              VALUES (?,?,?,?,?,?,?,?)""", (eid, date, f.get("leave_type", "CL"), 1 if f.get("paid") else 0,
+                                                           1 if f.get("half_day") else 0, f.get("reason", ""), g.user["username"],
+                                                           dt.datetime.now().strftime(TS_FMT)))
             audit("leave_add", {"emp": eid, "date": date, "type": f.get("leave_type")})
         elif act == "clear_leave":
             g.conn.execute("DELETE FROM leaves WHERE employee_id=? AND leave_date=?", (eid, date))
@@ -663,8 +735,9 @@ def att_day(eid, date):
             if status != (f.get("orig_status") or None):
                 ensure_unlocked(date)
                 if status:
-                    g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by)
-                                      VALUES (?,?,?,NULL,NULL,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"]))
+                    g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by, created_at)
+                                      VALUES (?,?,?,NULL,NULL,?,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"],
+                                                                         dt.datetime.now().strftime(TS_FMT)))
                 else:
                     g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
                 audit("day_override", {"emp": eid, "date": date, "status": status, "reason": f.get("reason"), "via": "quick"})
@@ -742,8 +815,7 @@ def _exception_items(rows):
 def exceptions():
     month = cur_month()
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         emps = {}
 
@@ -795,8 +867,7 @@ def exceptions():
 def leaves():
     month = cur_month()
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_edit()
         f = request.form
         if f.get("delete"):
             g.conn.execute("DELETE FROM leaves WHERE id = ?", (int(f["delete"]),))
@@ -805,9 +876,10 @@ def leaves():
             n = 0
             while a <= b:
                 ensure_unlocked(a.isoformat())
-                g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason)
-                                  VALUES (?,?,?,?,?,?)""", (int(f["employee_id"]), a.isoformat(), f["leave_type"],
-                                                           1 if f.get("paid") else 0, 1 if f.get("half_day") else 0, f.get("reason", "")))
+                g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason, created_by, created_at)
+                                  VALUES (?,?,?,?,?,?,?,?)""", (int(f["employee_id"]), a.isoformat(), f["leave_type"],
+                                                               1 if f.get("paid") else 0, 1 if f.get("half_day") else 0, f.get("reason", ""),
+                                                               g.user["username"], dt.datetime.now().strftime(TS_FMT)))
                 a += dt.timedelta(days=1)
                 n += 1
             flash(f"{n} leave day(s) recorded", "ok")
@@ -825,11 +897,11 @@ def leaves():
 
 
 @app.route("/adjustments", methods=["GET", "POST"])
+@pay_required
 def adjustments():
     month = cur_month()
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_pay()
         ensure_unlocked(month)
         f = request.form
         if f.get("delete"):
@@ -846,6 +918,72 @@ def adjustments():
     return render_template("adjustments.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt)
 
 
+# ------------------------------------------------------------------ changes made on top of machine data
+
+def edited_set(start, end, emp_id=None):
+    """(employee_id, date) pairs a person changed - used to highlight cells. Holidays apply to all, so skipped."""
+    return {(c["emp"]["id"], c["date"]) for c in chg.collect(g.conn, start, end, emp_id) if c["emp"]}
+
+
+@app.route("/changes")
+def changes_view():
+    month = cur_month()
+    start, end = engine.month_range(month)
+    emp_id = request.args.get("eid", type=int)
+    kind, by = request.args.get("kind", ""), request.args.get("by", "")
+    allc = chg.collect(g.conn, start, end, emp_id)
+    counts = {k: sum(1 for c in allc if c["kind"] == k) for k in chg.KINDS}
+    users = sorted({c["by"] for c in allc if c["by"]})
+    items = [c for c in allc if (not kind or c["kind"] == kind) and (not by or c["by"] == by)]
+    cmp = chg.compare(g.conn, items, start, end, g.settings)
+    # group by employee-day so the machine vs current view is shown once per day
+    groups = {}
+    for c in items:
+        key = (c["emp"]["id"] if c["emp"] else 0, c["date"])
+        grp = groups.setdefault(key, {"emp": c["emp"], "date": c["date"], "items": [], "cmp": cmp.get(key)})
+        grp["items"].append(c)
+    for key, val in cmp.items():  # days changed only indirectly (shift roster)
+        if key not in groups and kind in ("", "roster") and not by:
+            emp = next((c["emp"] for c in items if c["emp"] and c["emp"]["id"] == key[0]), None)
+            if emp:
+                groups[key] = {"emp": emp, "date": key[1], "items": [], "cmp": val}
+    order = sorted(groups.values(), key=lambda gr: (gr["date"], (gr["emp"] or {}).get("name", "")), reverse=True)
+    emps = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY name").fetchall()
+    prev, nxt = month_nav(month)
+    locked = payroll.run_status(g.conn, month) == "final"
+    return render_template("changes.html", groups=order, counts=counts, total=len(allc), month=month, prev=prev, nxt=nxt,
+                           emps=emps, users=users, kind=kind, by=by, emp_id=emp_id, KINDS=chg.KINDS, locked=locked)
+
+
+@app.route("/changes/undo", methods=["POST"])
+@edit_required
+def changes_undo():
+    """Revert one manual change so the machine's data applies again."""
+    f = request.form
+    kind, rid = f["kind"], int(f["id"])
+    table = {"punch_added": "punches", "punch_role": "punches", "status": "day_overrides", "leave": "leaves",
+             "penalty": "late_penalties", "roster": "employee_shifts", "holiday": "holidays"}.get(kind) or abort(400)
+    row = g.conn.execute(f"SELECT * FROM {table} WHERE id = ?", (rid,)).fetchone() or abort(404)
+    date = (row["ts"][:10] if table == "punches" else row["work_date"] if "work_date" in row.keys()
+            else row["leave_date"] if table == "leaves" else row["hdate"] if table == "holidays" else row["from_date"])
+    if table == "employee_shifts":
+        _ensure_range_unlocked(row["from_date"], row["to_date"])
+    else:
+        ensure_unlocked(date)
+    if kind == "punch_added":
+        if row["source"] != "manual":
+            abort(400, "Only manually added punches can be removed; machine punches can only be ignored")
+        g.conn.execute("DELETE FROM punches WHERE id = ?", (rid,))
+    elif kind == "punch_role":
+        g.conn.execute("UPDATE punches SET role=NULL, deleted=0, changed_by=NULL, changed_at=NULL WHERE id = ?", (rid,))
+    else:
+        g.conn.execute(f"DELETE FROM {table} WHERE id = ?", (rid,))
+    audit("change_undo", {"kind": kind, "id": rid, "date": date, "row": {k: row[k] for k in row.keys() if k != "note"}})
+    flash("Change undone - the machine's data applies again for that day (attendance recalculated)", "ok")
+    back = f.get("back", "")
+    return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("changes_view"))
+
+
 # ------------------------------------------------------------------ payroll
 
 def payroll_rows(month):
@@ -857,11 +995,11 @@ def payroll_rows(month):
 
 
 @app.route("/payroll", methods=["GET", "POST"])
+@pay_required
 def payroll_view():
     month = cur_month()
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_pay()
         act = request.form.get("action")
         try:
             if act in ("save", "finalize"):
@@ -883,6 +1021,7 @@ def payroll_view():
 
 
 @app.route("/payslip/<int:eid>")
+@pay_required
 def payslip(eid):
     month = cur_month()
     _, rows = payroll_rows(month)
@@ -893,6 +1032,7 @@ def payslip(eid):
 
 
 @app.route("/payslips")
+@pay_required
 def payslips():
     month = cur_month()
     _, rows = payroll_rows(month)
@@ -952,6 +1092,7 @@ def xlsx_response(name, sheets):
 
 
 @app.route("/export/payroll.<fmt>")
+@pay_required
 def export_payroll(fmt):
     month = cur_month()
     _, rows = payroll_rows(month)
@@ -983,12 +1124,13 @@ def attendance_report():
     if not eid:
         rows = [r for r in rows if r["summary"]["worked_min"] or r["summary"]["payable_days"]]
     for r in rows:
-        r["calc"] = reports.calc_lines(r, g.settings, g.settings.get("currency", "₹"))
+        r["calc"] = reports.calc_lines(r, g.settings, g.settings.get("currency", "₹")) if can_pay() else []
         r["credit"] = [reports.day_credit(d, r["summary"].get("wo_paid", 1)) for d in r["days"]]
     return render_template("attendance_report.html", rows=rows, month=month, run=run)
 
 
 @app.route("/export/payroll_formulas.xlsx")
+@pay_required
 def export_formula_xlsx():
     month = cur_month()
     eid = request.args.get("eid", type=int)
@@ -1000,6 +1142,7 @@ def export_formula_xlsx():
 
 
 @app.route("/export/bank.csv")
+@pay_required
 def export_bank():
     month = cur_month()
     _, rows = payroll_rows(month)
@@ -1041,8 +1184,7 @@ def export_punches():
 @app.route("/settings", methods=["GET", "POST"])
 def settings_view():
     if request.method == "POST":
-        if g.user["role"] != "admin":
-            abort(403)
+        require_admin()
         f = request.form
         act = f.get("action")
         if act == "settings":
@@ -1054,22 +1196,46 @@ def settings_view():
             audit("settings_save", {k: f[k] for k in f if k != "csrf"})
             flash("Settings saved", "ok")
         elif act == "add_user":
+            role = f.get("role") if f.get("role") in ROLES else "hr"
             if len(f["password"]) < 6:
                 flash("Password must be at least 6 characters", "error")
             else:
                 try:
                     g.conn.execute("INSERT INTO app_users(username, password_hash, role) VALUES (?,?,?)",
-                                   (f["username"].strip(), generate_password_hash(f["password"]), f.get("role", "viewer")))
-                    audit("user_add", f["username"])
-                    flash("User added", "ok")
+                                   (f["username"].strip(), generate_password_hash(f["password"]), role))
+                    audit("user_add", {"username": f["username"].strip(), "role": role})
+                    flash(f"User {f['username'].strip()} added as {ROLES[role]}", "ok")
                 except Exception as e:
                     flash(f"Could not add user: {e}", "error")
-        elif act == "delete_user":
-            if int(f["uid"]) == g.user["id"]:
-                flash("You cannot delete yourself", "error")
+        elif act in ("delete_user", "set_role", "reset_password"):
+            target = g.conn.execute("SELECT * FROM app_users WHERE id=?", (int(f["uid"]),)).fetchone() or abort(404)
+            admins = g.conn.execute("SELECT COUNT(*) FROM app_users WHERE role='admin'").fetchone()[0]
+            if act == "delete_user":
+                if target["id"] == g.user["id"]:
+                    flash("You cannot delete yourself", "error")
+                elif target["role"] == "admin" and admins <= 1:
+                    flash("Cannot delete the last admin", "error")
+                else:
+                    g.conn.execute("DELETE FROM app_users WHERE id=?", (target["id"],))
+                    audit("user_delete", target["username"])
+                    flash(f"Deleted user {target['username']}", "ok")
+            elif act == "set_role":
+                role = f.get("role")
+                if role not in ROLES:
+                    abort(400)
+                if target["role"] == "admin" and role != "admin" and admins <= 1:
+                    flash("Cannot remove the last admin", "error")
+                else:
+                    g.conn.execute("UPDATE app_users SET role=? WHERE id=?", (role, target["id"]))
+                    audit("user_role", {"username": target["username"], "from": target["role"], "to": role})
+                    flash(f"{target['username']} is now {ROLES[role]}", "ok")
             else:
-                g.conn.execute("DELETE FROM app_users WHERE id=?", (int(f["uid"]),))
-                audit("user_delete", f["uid"])
+                if len(f.get("password", "")) < 6:
+                    flash("Password must be at least 6 characters", "error")
+                else:
+                    g.conn.execute("UPDATE app_users SET password_hash=? WHERE id=?", (generate_password_hash(f["password"]), target["id"]))
+                    audit("user_password_reset", target["username"])
+                    flash(f"Password reset for {target['username']}", "ok")
         return redirect(url_for("settings_view"))
     users = g.conn.execute("SELECT id, username, role, created_at FROM app_users").fetchall()
     return render_template("settings.html", users=users)
@@ -1090,6 +1256,7 @@ def change_password():
 
 
 @app.route("/audit")
+@admin_required
 def audit_view():
     rows = g.conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 500").fetchall()
     return render_template("audit.html", rows=rows)

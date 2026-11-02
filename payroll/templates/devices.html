@@ -11,18 +11,18 @@
     <div><label>Port</label><input name="port" value="{{ d.port }}" size="6"></div>
     <div><label>Comm key</label><input name="password" value="{{ d.password }}" size="6"></div>
     <label class="chk"><input type="checkbox" name="active" {{ 'checked' if d.active }}> Active</label>
-    {% if user.role == 'admin' %}<button class="light">Save</button>{% endif %}
+    {% if is_admin %}<button class="light">Save</button>{% endif %}
   </form>
   <div class="small muted" style="margin:8px 0">Serial {{ d.serial or '-' }} · last sync {{ d.last_sync or 'never' }} · {{ d.last_status or '' }}</div>
-  {% if user.role == 'admin' %}<div class="toolbar">
+  {% if can_edit %}<div class="toolbar">
     <form method="post" action="{{ url_for('device_action', did=d.id, action='test') }}">{{ csrf_field() }}<button class="light">Test connection</button></form>
     <form method="post" action="{{ url_for('device_action', did=d.id, action='sync') }}">{{ csrf_field() }}<button>Download punches</button></form>
-    <form method="post" action="{{ url_for('device_action', did=d.id, action='settime') }}" onsubmit="return confirm('Set the device clock to this computer\'s time?')">{{ csrf_field() }}<button class="light">Set device clock to PC time</button></form>
-    <form method="post" action="{{ url_for('device_action', did=d.id, action='delete') }}" onsubmit="return confirm('Remove this device?')">{{ csrf_field() }}<button class="danger">Remove</button></form>
+    {% if is_admin %}<form method="post" action="{{ url_for('device_action', did=d.id, action='settime') }}" onsubmit="return confirm('Set the device clock to this computer\'s time?')">{{ csrf_field() }}<button class="light">Set device clock to PC time</button></form>
+    <form method="post" action="{{ url_for('device_action', did=d.id, action='delete') }}" onsubmit="return confirm('Remove this device?')">{{ csrf_field() }}<button class="danger">Remove</button></form>{% endif %}
   </div>{% endif %}
 </div>
 {% endfor %}
-{% if user.role == 'admin' %}
+{% if is_admin %}
 <div class="card"><h2>Add device</h2>
   <form method="post" class="row">{{ csrf_field() }}
     <div><label>Name</label><input name="name" required></div><div><label>IP address</label><input name="ip" required></div>
