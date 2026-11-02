@@ -1,0 +1,58 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% block title %}Payroll {{ month }}{% endblock %}
+{% block body %}
+<h1>Payroll register {{ monthnav('payroll_view', month, prev, nxt) }}
+  {% if run and run.status == 'final' %}<span class="badge bad">FINALIZED {{ run.finalized_at }} by {{ run.finalized_by }}</span>
+  {% elif run %}<span class="badge warn">draft saved {{ run.created_at }}</span>{% else %}<span class="badge">live preview</span>{% endif %}
+</h1>
+<div class="toolbar noprint">
+  {% if user.role == 'admin' %}
+    {% if not run or run.status != 'final' %}
+    <form method="post">{{ csrf_field() }}<button class="light" name="action" value="save">Save draft</button></form>
+    <form method="post" onsubmit="return confirm('Finalize {{ month }}? Attendance and adjustments for this month will be locked.')">{{ csrf_field() }}<button name="action" value="finalize">Finalize &amp; lock</button></form>
+    {% else %}
+    <form method="post" onsubmit="return confirm('Reopen {{ month }} for changes?')">{{ csrf_field() }}<button class="light" name="action" value="reopen">Reopen</button></form>
+    {% endif %}
+  {% endif %}
+  <a class="btn light" href="{{ url_for('export_payroll', fmt='xlsx', month=month) }}">Excel</a>
+  <a class="btn light" href="{{ url_for('export_payroll', fmt='csv', month=month) }}">CSV</a>
+  <a class="btn light" href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet</a>
+  <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">All payslips</a>
+  <a class="btn light" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Attendance statements</a>
+  <a class="btn light" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a>
+  <button class="light" onclick="window.print()">Print</button>
+</div>
+{% if unpriced %}<div class="flash error">{{ unpriced|length }} employee(s) have no salary rate set, so their pay is 0:
+  {% for r in unpriced[:12] %}<a href="{{ url_for('employee_edit', eid=r.emp.id) }}">{{ r.emp.name }}</a>{{ ', ' if not loop.last }}{% endfor %}{{ ' …' if unpriced|length > 12 }}.
+  <a href="{{ url_for('employees_bulk') }}">Bulk edit salaries</a></div>{% endif %}
+<div class="stats">
+  <div class="stat"><span>Employees</span><b>{{ rows|length }}</b></div>
+  <div class="stat"><span>Gross</span><b>{{ cur }}{{ totals.gross|money }}</b></div>
+  <div class="stat"><span>OT pay</span><b>{{ cur }}{{ totals.ot_pay|money }}</b></div>
+  <div class="stat bad"><span>Deductions</span><b>{{ cur }}{{ totals.total_deductions|money }}</b></div>
+  <div class="stat ok"><span>Net payable</span><b>{{ cur }}{{ totals.net|money }}</b></div>
+</div>
+<div class="scroll"><table>
+  <tr><th>ID</th><th>Name</th><th>Type</th><th class="n">Rate</th><th class="n">P</th><th class="n">HD</th><th class="n">A</th><th class="n">WO</th><th class="n">WOP</th><th class="n">Leave</th><th class="n">MP</th>
+    <th class="n">Payable</th><th class="n">Hours</th><th class="n">OT h</th><th class="n">Basic</th><th class="n">OT pay</th><th class="n">Allow.</th><th class="n">Gross</th>
+    <th class="n">PF</th><th class="n">ESI</th><th class="n">Adv/TDS/Oth</th><th class="n">Net</th><th></th></tr>
+  {% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}
+  <tr>
+    <td>{{ r.emp.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.name }}</a></td>
+    <td class="small">{{ p.salary_type }}</td><td class="n">{{ p.rate|money if p.rate else '—' }}</td>
+    <td class="n">{{ s.get('cnt_P',0)|days }}</td><td class="n">{{ s.get('cnt_HD',0)|days }}</td><td class="n">{{ s.get('cnt_A',0)|days }}</td>
+    <td class="n">{{ s.get('cnt_WO',0)|days }}</td><td class="n">{{ (s.get('cnt_WOP',0) + s.get('cnt_HP',0))|days }}</td><td class="n">{{ s.get('leave_credit',0)|days }}</td>
+    <td class="n">{{ s.get('cnt_MP',0)|days }}</td><td class="n"><b>{{ s.payable_days|days }}</b></td>
+    <td class="n">{{ fmt_min(s.worked_min) }}</td><td class="n" title="{% if s.get('late_penalty_min') %}{{ fmt_min(s.ot_min_gross) }} earned − {{ fmt_min(s.late_penalty_min) }} late penalty{% endif %}">{{ p.ot_hours }}{% if s.get('late_penalty_min') %}<span class="small muted">*</span>{% endif %}</td>
+    <td class="n">{{ p.basic|money }}</td><td class="n">{{ p.ot_pay|money }}</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td><td class="n">{{ p.gross|money }}</td>
+    <td class="n">{{ p.pf|money }}</td><td class="n">{{ p.esi|money }}</td><td class="n">{{ (p.advance + p.tds + p.other_deduction)|money }}</td>
+    <td class="n"><b>{{ p.net|money }}</b></td>
+    <td><a class="small" href="{{ url_for('payslip', eid=r.emp.id, month=month) }}" target="_blank">slip</a></td>
+  </tr>{% endfor %}
+  <tr><th colspan="14">Total</th><th class="n">{{ totals.basic|money }}</th><th class="n">{{ totals.ot_pay|money }}</th><th class="n">{{ (totals.allowance + totals.bonus)|money }}</th>
+    <th class="n">{{ totals.gross|money }}</th><th class="n">{{ totals.pf|money }}</th><th class="n">{{ totals.esi|money }}</th>
+    <th class="n">{{ (totals.advance + totals.tds + totals.other_deduction)|money }}</th><th class="n">{{ totals.net|money }}</th><th></th></tr>
+</table></div>
+<p class="small muted">Payable days = full days + ½ × half days + paid weekly offs + paid holidays + paid leave + extra days worked on offs − late-mark deductions.
+Monthly salary per day = rate ÷ {{ 'days in month' if settings.month_days_mode == 'calendar' else settings.fixed_month_days }}. OT hourly rate = per-day rate ÷ shift standard hours × OT multiplier.</p>
+{% endblock %}

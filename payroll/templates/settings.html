@@ -1,0 +1,75 @@
+{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% block title %}Settings{% endblock %}
+{% block body %}
+{% set s = settings %}
+<h1>Settings <a class="btn light small" href="{{ url_for('audit_view') }}">Audit log</a>
+  {% if user.role == 'admin' %}<a class="btn light small" href="{{ url_for('backup') }}">Download database backup</a>{% endif %}</h1>
+<form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="settings">
+<div class="card"><h2>Company</h2><div class="form-grid">
+  <div><label>Company name</label><input name="company_name" value="{{ s.company_name }}"></div>
+  <div><label>Address (on payslip)</label><input name="company_address" value="{{ s.company_address }}"></div>
+  <div><label>Currency symbol</label><input name="currency" value="{{ s.currency }}"></div>
+  <div><label>Auto-sync device every (minutes, 0 = off)</label><input type="number" name="auto_sync_minutes" value="{{ s.auto_sync_minutes }}"></div>
+</div></div>
+<div class="card"><h2>Attendance rules</h2><div class="form-grid">
+  <div><label>Hours calculation</label><select name="calc_mode">
+    <option value="first_last" {{ 'selected' if s.calc_mode=='first_last' }}>First in → last out (recommended)</option>
+    <option value="pairs" {{ 'selected' if s.calc_mode=='pairs' }}>Sum of in/out pairs (lunch punched)</option></select></div>
+  <div><label>Missing punch (single punch) counts as</label><select name="missing_punch_policy">
+    {% for k, l in [('absent','Absent until fixed'),('half','Half day until fixed'),('full','Full day')] %}<option value="{{ k }}" {{ 'selected' if s.missing_punch_policy==k }}>{{ l }}</option>{% endfor %}</select></div>
+  <div><label>Ignore repeat punches within (seconds)</label><input type="number" name="dedup_seconds" value="{{ s.dedup_seconds }}"></div>
+  <div><label>Late marks per ½-day deduction (0 = off)</label><input type="number" name="late_marks_per_halfday" value="{{ s.late_marks_per_halfday }}"></div>
+  <div><label>Work on weekly off / holiday is paid as</label><select name="wo_work_mode">
+    <option value="extra_day" {{ 'selected' if s.wo_work_mode=='extra_day' }}>Extra day's wage (+OT beyond shift)</option>
+    <option value="ot" {{ 'selected' if s.wo_work_mode=='ot' }}>All hours as overtime</option></select></div>
+  <div><label>Longest continuous duty to pair as one shift (hours)</label><input type="number" name="max_duty_hours" value="{{ s.max_duty_hours }}"></div>
+  <div><label>Flag shifts longer than (hours) for review</label><input type="number" name="long_duty_flag_hours" value="{{ s.long_duty_flag_hours }}"></div>
+  <div><label>Long duty (e.g. 24 h) is paid as</label><select name="long_duty_mode">
+    <option value="ot" {{ 'selected' if s.long_duty_mode=='ot' }}>1 day + overtime for extra hours</option>
+    <option value="double" {{ 'selected' if s.long_duty_mode=='double' }}>2 days (+ OT beyond two shifts)</option></select></div>
+  <div><label>&nbsp;</label>
+    <label class="chk"><input type="checkbox" name="sandwich_rule" {{ 'checked' if s.sandwich_rule=='1' }}> Sandwich rule (off day between two absences = absent)</label></div>
+</div></div>
+<div class="card"><h2>Late-comer penalty — suggested minutes</h2>
+  <p class="small muted" style="margin-top:0">The penalty is <b>chosen day by day on each employee's sheet</b> (Attendance → employee → "Late penalty" column).
+  Only days you penalize reduce that employee's overtime; OT never goes below zero and salary is never cut.
+  These two numbers only pre-fill the suggested minutes. Example: 30 + 1 × minutes late → 40 min late suggests 70 min.</p>
+  <div class="form-grid">
+  <div><label>Fixed OT minutes per late day</label><input type="number" min="0" name="late_penalty_per_mark_min" value="{{ s.late_penalty_per_mark_min }}"></div>
+  <div><label>Plus × minutes late (0 = ignore, 1 = same, 2 = double)</label><input type="number" min="0" step="0.25" name="late_penalty_factor" value="{{ s.late_penalty_factor }}"></div>
+</div></div>
+<div class="card"><h2>Salary rules</h2><div class="form-grid">
+  <div><label>Monthly salary per-day divisor</label><select name="month_days_mode">
+    <option value="calendar" {{ 'selected' if s.month_days_mode=='calendar' }}>Days in the month (28–31)</option>
+    <option value="fixed" {{ 'selected' if s.month_days_mode=='fixed' }}>Fixed number of days</option></select></div>
+  <div><label>Fixed days (if fixed)</label><input type="number" name="fixed_month_days" value="{{ s.fixed_month_days }}"></div>
+  <div><label>&nbsp;</label>
+    <label class="chk"><input type="checkbox" name="weekly_off_paid_monthly" {{ 'checked' if s.weekly_off_paid_monthly=='1' }}> Weekly off paid for monthly staff</label>
+    <label class="chk"><input type="checkbox" name="weekly_off_paid_daily" {{ 'checked' if s.weekly_off_paid_daily=='1' }}> Weekly off paid for daily-wage staff</label></div>
+</div></div>
+<div class="card"><h2>Statutory (applied only to employees with PF / ESI ticked)</h2><div class="form-grid">
+  <div><label>Employee PF %</label><input name="pf_rate" value="{{ s.pf_rate }}"></div>
+  <div><label>PF wage ceiling ({{ cur }})</label><input name="pf_wage_ceiling" value="{{ s.pf_wage_ceiling }}"></div>
+  <div><label>Employee ESI %</label><input name="esi_rate" value="{{ s.esi_rate }}"></div>
+  <div><label>ESI applies if gross ≤ ({{ cur }})</label><input name="esi_gross_ceiling" value="{{ s.esi_gross_ceiling }}"></div>
+</div></div>
+{% if user.role == 'admin' %}<button>Save settings</button>{% endif %}
+</form>
+<div class="row" style="align-items:flex-start;margin-top:14px">
+<div class="card grow"><h2>Users</h2>
+  <table>{% for u in users %}<tr><td>{{ u.username }}</td><td>{{ u.role }}</td><td class="small muted">{{ u.created_at }}</td>
+    <td>{% if user.role == 'admin' and u.id != user.id %}<form method="post" class="inline" onsubmit="return confirm('Delete user?')">{{ csrf_field() }}<input type="hidden" name="action" value="delete_user"><input type="hidden" name="uid" value="{{ u.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>{% endfor %}</table>
+  {% if user.role == 'admin' %}
+  <form method="post" class="row" style="margin-top:10px">{{ csrf_field() }}<input type="hidden" name="action" value="add_user">
+    <div><label>Username</label><input name="username" required></div><div><label>Password</label><input type="password" name="password" required></div>
+    <div><label>Role</label><select name="role"><option value="viewer">viewer (read only)</option><option value="admin">admin</option></select></div>
+    <button>Add user</button></form>{% endif %}
+</div>
+<div class="card grow"><h2>Change my password</h2>
+  <form method="post" action="{{ url_for('change_password') }}">{{ csrf_field() }}
+    <label>Current password</label><input type="password" name="old" required>
+    <label>New password</label><input type="password" name="new" required>
+    <p><button>Change password</button></p></form>
+</div>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Payslips {{ month }}{% endblock %}
+{% block body %}
+<div class="toolbar noprint"><button onclick="window.print()">Print</button><span class="muted">{{ rows|length }} payslip(s)</span></div>
+{% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}{% set e = r.emp %}
+<div class="slip">
+  <h3>{{ settings.company_name }}</h3>
+  <div class="sub small">{{ settings.company_address }}<br><b>Payslip for {{ month }}</b></div>
+  <table style="margin-bottom:10px">
+    <tr><td>Employee</td><td><b>{{ e.name }}</b></td><td>Emp ID</td><td>{{ e.emp_code or e.device_user_id }}</td></tr>
+    <tr><td>Department</td><td>{{ e.department }}</td><td>Designation</td><td>{{ e.designation }}</td></tr>
+    <tr><td>Bank A/c</td><td>{{ e.bank_account }} {{ e.ifsc }}</td><td>UAN / ESI</td><td>{{ e.uan }} {{ e.esi_no }}</td></tr>
+    <tr><td>Salary basis</td><td>{{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td><td>Payable days</td><td><b>{{ p.payable_days|days }}</b> of {{ s.days_in_period }}</td></tr>
+  </table>
+  <table style="margin-bottom:10px">
+    <tr><th>Present</th><th>Half day</th><th>Absent</th><th>Weekly off</th><th>Worked on off</th><th>Leave</th><th>Late</th><th>Hours</th><th>OT hours</th></tr>
+    <tr><td>{{ s.get('cnt_P',0)|days }}</td><td>{{ s.get('cnt_HD',0)|days }}</td><td>{{ s.get('cnt_A',0)|days }}</td><td>{{ s.get('cnt_WO',0)|days }}</td>
+      <td>{{ (s.get('cnt_WOP',0) + s.get('cnt_HP',0))|days }}</td><td>{{ s.get('leave_credit',0)|days }}</td><td>{{ s.get('late_count',0)|days }}</td>
+      <td>{{ fmt_min(s.worked_min) }}</td><td>{{ p.ot_hours }}</td></tr>
+  </table>
+  <table>
+    <tr><th>Earnings</th><th class="n">{{ cur }}</th><th>Deductions</th><th class="n">{{ cur }}</th></tr>
+    <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td><td>Provident fund</td><td class="n">{{ p.pf|money }}</td></tr>
+    <tr><td>Overtime ({{ p.ot_hours }} h{% if p.get('late_penalty_hours') %} after {{ p.late_penalty_hours }} h late penalty{% endif %})</td><td class="n">{{ p.ot_pay|money }}</td><td>ESI</td><td class="n">{{ p.esi|money }}</td></tr>
+    <tr><td>Allowances</td><td class="n">{{ p.allowance|money }}</td><td>Advance recovery</td><td class="n">{{ p.advance|money }}</td></tr>
+    <tr><td>Bonus / incentive</td><td class="n">{{ p.bonus|money }}</td><td>TDS + other</td><td class="n">{{ (p.tds + p.other_deduction)|money }}</td></tr>
+    <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th><th>Total deductions</th><th class="n">{{ p.total_deductions|money }}</th></tr>
+  </table>
+  <div class="net">Net pay: {{ cur }}{{ p.net|money }}</div>
+  <div class="small muted" style="margin-top:30px;display:flex;justify-content:space-between"><span>Employer signature</span><span>Employee signature</span></div>
+</div>
+{% endfor %}
+{% endblock %}

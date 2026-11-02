@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, csrf_field with context %}
+{% block title %}Exceptions {{ month }}{% endblock %}
+{% block body %}
+<h1>Attendance exceptions {{ monthnav('exceptions', month, prev, nxt, kind=kind) }}</h1>
+<p class="muted">Punches are paired across days automatically (a shift may run past midnight, up to {{ settings.max_duty_hours }} h).
+Only what the system can't be sure about is listed here. Each fix re-pairs all later days.</p>
+<div class="toolbar">
+  <a class="btn small {{ '' if not kind else 'light' }}" href="{{ url_for('exceptions', month=month) }}">All ({{ counts.values()|sum }})</a>
+  <a class="btn small {{ '' if kind=='mp' else 'light' }}" href="{{ url_for('exceptions', month=month, kind='mp') }}">Missing punch ({{ counts.mp }})</a>
+  <a class="btn small {{ '' if kind=='long' else 'light' }}" href="{{ url_for('exceptions', month=month, kind='long') }}">Long duty ({{ counts.long }})</a>
+  <a class="btn small {{ '' if kind=='short' else 'light' }}" href="{{ url_for('exceptions', month=month, kind='short') }}">Too short ({{ counts.short }})</a>
+</div>
+{% set admin = user.role == 'admin' %}
+<form method="post" id="bulk">{{ csrf_field() }}</form>
+{% if admin %}
+<div class="toolbar">
+  <label class="chk"><input type="checkbox" onclick="document.querySelectorAll('input[name=pick]').forEach(c => c.checked = this.checked)"> select all suggestions</label>
+  <button form="bulk" name="action" value="apply_suggestions">Apply selected suggestions</button>
+  <label class="chk"><input type="checkbox" onclick="document.querySelectorAll('input[name=pick_long]').forEach(c => c.checked = this.checked)"> select all long duties</label>
+  <button form="bulk" class="light" name="action" value="confirm_long_all">Confirm selected long duties</button>
+</div>
+{% endif %}
+<div class="scroll"><table>
+  <tr><th></th><th>Date</th><th>Employee</th><th>Status</th><th>Sessions</th><th>Issue</th><th>Suggested fix</th><th></th></tr>
+  {% for it in items %}{% set d = it.d %}{% set e = it.emp %}
+  <tr>
+    <td>{% if admin and d.suggest and it.orphan %}<input type="checkbox" form="bulk" name="pick"
+          value="{{ e.id }}|{{ d.suggest.ts.strftime('%Y-%m-%d %H:%M:%S') }}|{{ d.suggest.role }}|{{ it.orphan.ids[0] }}|{{ d.suggest.orphan_role }}">
+        {% elif admin and it.long %}<input type="checkbox" form="bulk" name="pick_long" value="{{ e.id }}|{{ it.long.ids[0] }}|{{ it.long.ids[-1] }}">{% endif %}</td>
+    <td>{{ d.date.strftime('%d %b') }} {{ d.date.strftime('%a') }}</td><td>{{ e.device_user_id }} · {{ e.name }}</td><td>{{ st(d.status, d.override) }}</td>
+    <td class="small">{% for s in d.sessions %}{{ s.start.strftime('%H:%M') }}→{{ s.end.strftime('%d %H:%M') if s.end else '??' }}{{ ', ' if not loop.last }}{% endfor %}</td>
+    <td>{{ it.reason }}</td>
+    <td class="small">{% if d.suggest %}add <b>{{ d.suggest.role|upper }}</b> {{ d.suggest.ts.strftime('%d %b %H:%M') }}{% endif %}</td>
+    <td style="white-space:nowrap">
+      {% if admin and it.long %}
+      <form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="eid" value="{{ e.id }}">
+        <input type="hidden" name="start_id" value="{{ it.long.ids[0] }}"><input type="hidden" name="end_id" value="{{ it.long.ids[-1] }}">
+        <button class="light small" name="action" value="confirm_long" title="Yes, worked continuously">Confirm</button>
+        <button class="light small" name="action" value="split_long" title="The later punch was the next day's arrival">Not long - split</button></form>
+      {% endif %}
+      <a class="btn light small" href="{{ url_for('att_day', eid=e.id, date=d.date.isoformat(), back=request.full_path) }}">edit</a></td>
+  </tr>
+  {% else %}<tr><td colspan="8" class="muted">Nothing to fix for {{ month }}.</td></tr>{% endfor %}
+</table></div>
+<p class="small muted">Suggestions use each employee's usual in/out time. Until corrected, a missing punch is paid as <b>{{ settings.missing_punch_policy }}</b> day (Settings).</p>
+{% endblock %}

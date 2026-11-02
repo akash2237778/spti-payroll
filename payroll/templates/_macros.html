@@ -1,0 +1,12 @@
+{% macro st(code, ov=False, title='') -%}
+<span class="st st-{{ code }}{{ ' ov' if ov }}" title="{{ title or STATUS_LABELS.get(code, code) }}">{{ code }}</span>
+{%- endmacro %}
+{% macro monthnav(endpoint, month, prev, nxt) -%}
+<span class="nav-month noprint"><a class="btn light small" href="{{ url_for(endpoint, month=prev, **kwargs) }}">&larr;</a>
+<form class="inline" method="get"><input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></form>
+<a class="btn light small" href="{{ url_for(endpoint, month=nxt, **kwargs) }}">&rarr;</a></span>
+{%- endmacro %}
+{% macro csrf_field() %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endmacro %}
+{% macro legend() %}
+<div class="legend small muted">{% for k in ['P','HD','A','MP','WO','WOP','H','HP','L','LWP'] %}<span>{{ st(k) }} {{ STATUS_LABELS[k] }}</span>{% endfor %}<span><span class="st ov">&nbsp;</span> Manually corrected</span></div>
+{% endmacro %}

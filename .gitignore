@@ -1,0 +1,17 @@
+# Payroll data: database, secret key, backups - never commit
+data/
+*.db
+*.db-wal
+*.db-shm
+secret.key
+
+# Real employee punches captured from the attendance machine (used by the offline test)
+tests/data/
+
+# Generated files
+*.xlsx
+__pycache__/
+.pytest_cache/
+
+# Local tooling
+.claude/

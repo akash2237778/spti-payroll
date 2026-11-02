@@ -1,0 +1,88 @@
+{% extends "base.html" %}{% from "_macros.html" import st, csrf_field with context %}
+{% block title %}{{ emp.name }} {{ d }}{% endblock %}
+{% block body %}
+<h1>{{ emp.name }} · {{ d.strftime('%A, %d %b %Y') }} {{ st(rec.status, rec.override) }}
+  {% if locked %}<span class="badge bad">payroll finalized - read only</span>{% endif %}</h1>
+<p><a href="{{ back or url_for('att_employee', eid=emp.id, month=d.strftime('%Y-%m')) }}">&larr; back</a></p>
+<div class="card">
+  <b>Work sessions starting this day:</b>
+  {% for s in rec.sessions %}
+    <span class="badge {{ 'bad' if s.orphan else 'ok' }}">{{ s.start.strftime('%d %b %H:%M') }} → {{ s.end.strftime('%d %b %H:%M') if s.end else '??' }}
+      {% if s.end %}({{ '%.1f'|format((s.end - s.start).total_seconds() / 3600) }} h){% endif %}</span>
+  {% else %}<span class="muted">none</span>{% endfor %}
+  <div style="margin-top:6px">{{ STATUS_LABELS.get(rec.status) }} · worked {{ fmt_min(rec.worked_min) }} · late {{ rec.late_min }}m · early {{ rec.early_min }}m · OT {{ fmt_min(rec.ot_min) }}
+  {% for f in rec.flags %}<span class="badge warn">{{ f }}</span>{% endfor %}</div>
+  <div class="small muted">Shift on this day: <b>{{ shift.name }}</b> {{ shift.start_time }}-{{ shift.end_time }}
+    <a href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">change</a>{% if typical %} · this employee usually works
+    {{ '%02d:%02d'|format(typical[0]|int, ((typical[0] % 1) * 60)|round|int) }}–{{ '%02d:%02d'|format(typical[1]|int, ((typical[1] % 1) * 60)|round|int) }}{% endif %}</div>
+</div>
+{% set panel_from = d.isoformat() %}{% set panel_to = d.isoformat() %}{% set panel_open = false %}
+{% include "_shift_panel.html" %}
+{% set ro = locked or user.role != 'admin' %}
+<div class="row" style="align-items:stretch">
+<div class="card grow">
+  <h2>Correct this shift (one step)</h2>
+  {% if rec.suggest %}<p class="small">Suggested: add <b>{{ rec.suggest.role|upper }}</b> at <b>{{ rec.suggest.ts.strftime('%d %b %H:%M') }}</b> (pre-filled below).</p>{% endif %}
+  {% if not ro %}
+  <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="fix_session"><input type="hidden" name="back" value="{{ request.full_path }}">
+    <div class="form-grid">
+      <div><label>In (date &amp; time)</label><input type="datetime-local" name="in_dt" value="{{ default_in.strftime('%Y-%m-%dT%H:%M') }}" required></div>
+      <div><label>Out (date &amp; time, may be next day)</label><input type="datetime-local" name="out_dt" value="{{ default_out.strftime('%Y-%m-%dT%H:%M') }}" required></div>
+      <div><label>Reason</label><input name="reason" placeholder="forgot to punch out"></div>
+    </div>
+    <p><button>Save shift</button> <span class="small muted">Saves confirmed IN/OUT punches. Every later day re-pairs automatically.</span></p>
+  </form>
+  {% endif %}
+  <h2>Punches around this day</h2>
+  <table>
+    <tr><th>Time</th><th>Source</th><th>Role</th><th>Note</th><th></th></tr>
+    {% for p in raw %}{% set gone = p.deleted or p.role == 'ignore' %}
+    <tr style="{{ 'text-decoration:line-through;color:#999' if gone }}{{ ';font-weight:600' if p.ts in mine }}">
+      <td>{{ p.ts[:16] }} {{ (p.ts[:10]|dayname) }}</td><td>{{ p.source }}</td>
+      <td>{% if p.role in ('in','out') %}<span class="badge ok">{{ p.role|upper }} ✔</span>{% elif gone %}ignored{% else %}<span class="muted">auto</span>{% endif %}</td>
+      <td class="small">{{ p.note }}</td>
+      <td>{% if not ro %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="punch_id" value="{{ p.id }}">
+        <input type="hidden" name="back" value="{{ request.full_path }}"><input type="hidden" name="action" value="set_role">
+        <button class="light small" name="role" value="in" title="This punch is an arrival">IN</button>
+        <button class="light small" name="role" value="out" title="This punch is a departure">OUT</button>
+        <button class="light small" name="role" value="" title="Let the system decide">auto</button>
+        <button class="light small" name="role" value="ignore" title="Wrong / accidental punch">ignore</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">No punches.</td></tr>{% endfor %}
+  </table>
+  <p class="small muted">Bold = punches used for this day. Shows punches from noon the day before to noon two days later.
+    Marking one punch IN or OUT is usually enough: the whole stream is re-paired.</p>
+  {% if not ro %}
+  <h2>Add a single punch</h2>
+  <form method="post" class="row">{{ csrf_field() }}<input type="hidden" name="action" value="add_punch"><input type="hidden" name="back" value="{{ request.full_path }}">
+    <div><label>Date &amp; time</label><input type="datetime-local" name="ts" value="{{ (rec.suggest.ts if rec.suggest else default_out).strftime('%Y-%m-%dT%H:%M') }}" required></div>
+    <div><label>Role</label><select name="role"><option value="">auto</option><option value="in">IN</option><option value="out">OUT</option></select></div>
+    <div class="grow"><label>Reason</label><input name="reason" style="width:100%"></div>
+    <button>Add punch</button></form>
+  {% endif %}
+</div>
+<div class="card grow">
+  <h2>Force day status</h2>
+  {% if ov %}<p class="small">Current: <b>{{ ov.status or '-' }}</b>{% if ov.in_time %} (times {{ ov.in_time }}–{{ ov.out_time }}){% endif %}, by {{ ov.created_by }} ({{ ov.reason }})</p>{% endif %}
+  {% if not ro %}
+  <form method="post">{{ csrf_field() }}<input type="hidden" name="action" value="override"><input type="hidden" name="back" value="{{ request.full_path }}">
+    <label>Status</label><select name="status"><option value="">(calculate from punches)</option>
+      {% for s in OVERRIDE_STATUSES %}<option value="{{ s }}" {{ 'selected' if ov and ov.status == s }}>{{ s }} - {{ STATUS_LABELS[s] }}</option>{% endfor %}</select>
+    <label style="margin-top:8px">Reason</label><input name="reason" style="width:100%" value="{{ ov.reason if ov else '' }}" required>
+    <p><button>Save status</button></p>
+  </form>
+  {% if ov %}<form method="post">{{ csrf_field() }}<input type="hidden" name="back" value="{{ request.full_path }}"><button class="light" name="action" value="clear_override">Remove override</button></form>{% endif %}
+  {% endif %}
+  <h2>Leave</h2>
+  {% if lv %}<p>{{ lv.leave_type }} · {{ 'paid' if lv.paid else 'unpaid' }}{{ ' · half day' if lv.half_day }} · {{ lv.reason }}</p>
+    {% if not ro %}<form method="post">{{ csrf_field() }}<input type="hidden" name="back" value="{{ request.full_path }}"><button class="light" name="action" value="clear_leave">Remove leave</button></form>{% endif %}
+  {% elif not ro %}
+  <form method="post" class="row">{{ csrf_field() }}<input type="hidden" name="action" value="leave"><input type="hidden" name="back" value="{{ request.full_path }}">
+    <div><label>Type</label><select name="leave_type"><option>CL</option><option>SL</option><option>EL</option><option>Other</option></select></div>
+    <label class="chk"><input type="checkbox" name="paid" checked> Paid</label>
+    <label class="chk"><input type="checkbox" name="half_day"> Half day</label>
+    <div class="grow"><label>Reason</label><input name="reason" style="width:100%"></div>
+    <button>Mark leave</button></form>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

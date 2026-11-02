@@ -1,0 +1,10 @@
+data/
+tests/
+.git/
+.github/
+.claude/
+.pytest_cache/
+**/__pycache__/
+*.xlsx
+*.db
+deploy/

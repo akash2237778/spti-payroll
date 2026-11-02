@@ -1,0 +1,37 @@
+# What is deployed on TrueNAS as the custom app "spti-payroll" (Apps -> Install via YAML).
+# Code lives in the dataset (mounted read-only); data (database, secret key, backups, python libs) in /data.
+# Reached on the LAN at http://192.168.1.24:8095 and over Tailscale at http://192.168.2.64:8095
+# (TrueNAS's own Tailscale app runs with host networking, so the host port is on the tailnet).
+services:
+  payroll:
+    image: python:3.12-slim
+    user: "568:568"
+    working_dir: /app
+    environment:
+      TZ: Asia/Kolkata
+      PAYROLL_DB: /data/payroll.db
+      PORT: "8000"
+      PYTHONPATH: /data/pydeps
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      HOME: /tmp
+    command:
+      - sh
+      - -c
+      - >-
+        python -c "import flask, zk, openpyxl, waitress" 2>/dev/null
+        || pip install --no-cache-dir -q --target /data/pydeps flask pyzk openpyxl waitress;
+        exec python run.py
+    volumes:
+      - /mnt/pool/apps/spti-payroll/app:/app:ro
+      - /mnt/pool/apps/spti-payroll/data:/data
+      - /usr/share/zoneinfo/Asia/Kolkata:/etc/localtime:ro
+    ports:
+      - "8095:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"]
+      interval: 60s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
+    restart: unless-stopped

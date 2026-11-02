@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% block title %}Leaves {{ month }}{% endblock %}
+{% block body %}
+<h1>Leaves {{ monthnav('leaves', month, prev, nxt) }}</h1>
+{% if user.role == 'admin' %}
+<form method="post" class="card row">{{ csrf_field() }}
+  <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
+  <div><label>From</label><input type="date" name="from" required></div>
+  <div><label>To</label><input type="date" name="to"></div>
+  <div><label>Type</label><select name="leave_type"><option>CL</option><option>SL</option><option>EL</option><option>Other</option></select></div>
+  <label class="chk"><input type="checkbox" name="paid" checked> Paid</label>
+  <label class="chk"><input type="checkbox" name="half_day"> Half day</label>
+  <div class="grow"><label>Reason</label><input name="reason" style="width:100%"></div>
+  <button>Add leave</button>
+</form>
+{% endif %}
+<div class="row" style="align-items:flex-start">
+<div class="grow"><h2>{{ month }}</h2><table>
+  <tr><th>Date</th><th>Employee</th><th>Type</th><th>Paid</th><th>Half</th><th>Reason</th><th></th></tr>
+  {% for l in rows %}<tr><td>{{ l.leave_date }}</td><td>{{ l.name }}</td><td>{{ l.leave_type }}</td><td>{{ 'Yes' if l.paid else 'No' }}</td><td>{{ 'Yes' if l.half_day else '' }}</td><td>{{ l.reason }}</td>
+    <td>{% if user.role == 'admin' %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ l.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="7" class="muted">No leaves this month.</td></tr>{% endfor %}
+</table></div>
+<div style="min-width:280px"><h2>Leaves taken in {{ year }}</h2><table>
+  <tr><th>Employee</th><th>Type</th><th class="n">Days</th></tr>
+  {% for b in balance %}<tr><td>{{ b.name }}</td><td>{{ b.leave_type }}</td><td class="n">{{ b.n|days }}</td></tr>
+  {% else %}<tr><td colspan="3" class="muted">None</td></tr>{% endfor %}
+</table></div>
+</div>
+{% endblock %}

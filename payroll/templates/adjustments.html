@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% block title %}Advances &amp; allowances {{ month }}{% endblock %}
+{% block body %}
+<h1>Advances, allowances &amp; deductions {{ monthnav('adjustments', month, prev, nxt) }}</h1>
+<p class="muted">One-off amounts for this month's payroll. Allowance and bonus add to gross pay; advance recovery, TDS and other deductions reduce net pay.</p>
+{% if user.role == 'admin' %}
+<form method="post" class="card row">{{ csrf_field() }}
+  <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
+  <div><label>Type</label><select name="kind">
+    <option value="advance">Advance recovery (−)</option><option value="deduction">Other deduction (−)</option><option value="tds">TDS (−)</option>
+    <option value="allowance">Allowance (+)</option><option value="bonus">Bonus / incentive (+)</option></select></div>
+  <div><label>Amount ({{ cur }})</label><input type="number" step="0.01" min="0" name="amount" required></div>
+  <div class="grow"><label>Note</label><input name="note" style="width:100%"></div>
+  <button>Add</button>
+</form>
+{% endif %}
+<table>
+  <tr><th>Employee</th><th>Type</th><th class="n">Amount</th><th>Note</th><th></th></tr>
+  {% for a in rows %}<tr><td>{{ a.name }} (#{{ a.device_user_id }})</td><td>{{ a.kind }}</td><td class="n">{{ a.amount|money }}</td><td>{{ a.note }}</td>
+    <td>{% if user.role == 'admin' %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ a.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
+  {% else %}<tr><td colspan="5" class="muted">No entries for {{ month }}.</td></tr>{% endfor %}
+</table>
+{% endblock %}

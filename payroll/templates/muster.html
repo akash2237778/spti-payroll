@@ -1,0 +1,36 @@
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field with context %}
+{% block title %}Muster roll {{ month }}{% endblock %}
+{% block body %}
+<h1>Monthly muster roll {{ monthnav('att_monthly', month, prev, nxt) }}
+  <a class="btn light small noprint" href="{{ url_for('export_muster', month=month) }}">Export Excel</a>
+  <a class="btn light small noprint" href="{{ url_for('export_punches', month=month) }}">Raw punches CSV</a>
+  <button class="light small noprint" onclick="window.print()">Print</button>
+  <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Print all employee cards</a>
+  <a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a></h1>
+{% if user.role == 'admin' %}
+<form method="post" action="{{ url_for('holidays', year=month[:4]) }}" class="row noprint" style="margin-bottom:8px;align-items:center">{{ csrf_field() }}
+  <input type="hidden" name="back" value="{{ request.full_path }}"><input type="hidden" name="paid" value="1">
+  <span class="small"><b>Add paid holiday:</b></span><input type="date" name="hdate" min="{{ month }}-01" max="{{ dates[-1].isoformat() }}" required>
+  <input name="name" placeholder="Gandhi Jayanti" required><button class="light small">Add</button>
+  {% if hol %}<span class="small muted">Holidays: {% for k, h in hol.items() %}{{ k[8:] }} {{ h.name }}{{ ' (unpaid)' if not h.paid }}{{ ', ' if not loop.last }}{% endfor %}</span>{% endif %}
+</form>
+{% endif %}
+{{ legend() }}
+<div class="scroll" style="margin-top:8px"><table class="muster">
+  <tr><th class="name">Employee</th>
+    {% for d in dates %}<th class="{{ 'sun' if d.weekday()==6 or d.isoformat() in hol }}" title="{{ hol[d.isoformat()].name if d.isoformat() in hol else '' }}">{{ d.day }}<br><span class="muted">{{ d.strftime('%a')[:2] }}</span></th>{% endfor %}
+    <th>P</th><th>HD</th><th>A</th><th>WO</th><th>WOP</th><th>MP</th><th>Late</th><th>Payable</th><th>Hours</th><th>OT</th></tr>
+  {% for r in rows %}{% set s = r.summary %}
+  <tr>
+    <td class="name"><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.device_user_id }} · {{ r.emp.name }}</a></td>
+    {% for d in r.days %}{% set tip = (d.shift.name ~ ' shift · ' if d.shift_changed else '') ~ STATUS_LABELS.get(d.status, '')
+        ~ (' ' ~ d['in'].strftime('%H:%M') if d['in'] else '') ~ (' - ' ~ d.out.strftime('%H:%M') if d.out else '')
+        ~ (' (' ~ fmt_min(d.worked_min) ~ ')' if d.worked_min else '') %}<td><a href="{{ url_for('att_day', eid=r.emp.id, date=d.date.isoformat(), back=request.full_path) }}">{{ st(d.status, d.override, tip) }}{% if d.shift_changed %}<sup class="small" title="{{ d.shift.name }} shift">{{ d.shift.name[:1] }}</sup>{% endif %}</a></td>{% endfor %}
+    <td>{{ s.get('cnt_P',0)|days }}</td><td>{{ s.get('cnt_HD',0)|days }}</td><td>{{ s.get('cnt_A',0)|days }}</td><td>{{ s.get('cnt_WO',0)|days }}</td>
+    <td>{{ s.get('cnt_WOP',0)|days }}</td><td>{{ s.get('cnt_MP',0)|days }}</td><td>{{ s.get('late_count',0)|days }}</td>
+    <td><b>{{ s.payable_days|days }}</b></td><td>{{ fmt_min(s.worked_min) }}</td><td>{{ fmt_min(s.ot_min) }}</td>
+  </tr>
+  {% endfor %}
+</table></div>
+<p class="small muted">Hover a cell for in/out times; click to correct the day.</p>
+{% endblock %}

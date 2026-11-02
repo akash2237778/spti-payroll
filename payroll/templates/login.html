@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% block title %}{{ 'Setup' if setup else 'Sign in' }}{% endblock %}
+{% block body %}
+<div class="card login">
+  <h1>{{ settings.company_name }} Payroll</h1>
+  <p class="muted">{{ 'First run: create the administrator account.' if setup else 'Sign in to continue.' }}</p>
+  <form method="post">{{ csrf_field() }}
+    <label>Username</label><input name="username" required autofocus>
+    <label>Password</label><input name="password" type="password" required>
+    <button style="width:100%">{{ 'Create admin' if setup else 'Sign in' }}</button>
+  </form>
+</div>
+{% endblock %}

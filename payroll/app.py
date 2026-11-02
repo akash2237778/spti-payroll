@@ -1,0 +1,1124 @@
+"""Flask web application for SPTI Payroll."""
+import csv
+import datetime as dt
+import functools
+import io
+import os
+import secrets
+
+from flask import (Flask, Response, abort, flash, g, redirect, render_template, request, send_file, session,
+                   url_for)
+from werkzeug.security import check_password_hash, generate_password_hash
+
+from . import db, device, engine, payroll, reports
+
+app = Flask(__name__)
+
+
+def _secret_key():
+    path = os.path.join(os.path.dirname(db.DB_PATH), "secret.key")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if not os.path.exists(path):
+        with open(path, "w") as f:
+            f.write(secrets.token_hex(32))
+    with open(path) as f:
+        return f.read().strip()
+
+
+app.config["SECRET_KEY"] = os.environ.get("PAYROLL_SECRET") or _secret_key()
+app.jinja_env.globals.update(fmt_min=engine.fmt_min, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
+                             OVERRIDE_STATUSES=engine.OVERRIDE_STATUSES, WEEKDAYS=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
+
+
+@app.template_filter("money")
+def money(v):
+    try:
+        return f"{float(v):,.2f}"
+    except (TypeError, ValueError):
+        return v
+
+
+@app.template_filter("dayname")
+def dayname(v):
+    try:
+        return dt.date.fromisoformat(str(v)[:10]).strftime("%a")
+    except ValueError:
+        return ""
+
+
+@app.template_filter("days")
+def days_fmt(v):
+    v = float(v or 0)
+    return f"{v:g}"
+
+
+# ------------------------------------------------------------------ request plumbing / auth
+
+@app.before_request
+def before():
+    g.conn = db.connect()
+    g.settings = db.get_settings(g.conn)
+    if "csrf" not in session:
+        session["csrf"] = secrets.token_hex(16)
+    if request.method == "POST" and request.endpoint not in ("static",):
+        if request.form.get("csrf") != session.get("csrf"):
+            abort(400, "Invalid form token, please reload the page")
+    g.user = None
+    if session.get("uid"):
+        g.user = g.conn.execute("SELECT * FROM app_users WHERE id = ?", (session["uid"],)).fetchone()
+    open_endpoints = ("login", "setup", "static", "healthz")
+    if request.endpoint in open_endpoints:
+        return
+    if not g.conn.execute("SELECT 1 FROM app_users").fetchone():
+        return redirect(url_for("setup"))
+    if not g.user:
+        return redirect(url_for("login", next=request.path))
+
+
+@app.teardown_request
+def teardown(exc):
+    conn = g.pop("conn", None)
+    if conn is not None:
+        if exc is None:
+            conn.commit()
+        conn.close()
+
+
+@app.context_processor
+def inject():
+    return {"user": g.get("user"), "settings": g.get("settings", {}), "csrf": session.get("csrf"),
+            "cur": g.get("settings", {}).get("currency", "₹")}
+
+
+def admin_required(fn):
+    @functools.wraps(fn)
+    def wrapper(*a, **kw):
+        if not g.user or g.user["role"] != "admin":
+            abort(403, "Admin access required")
+        return fn(*a, **kw)
+    return wrapper
+
+
+def audit(action, detail=""):
+    db.audit(g.conn, g.user["username"] if g.user else "-", action, detail)
+
+
+def cur_month():
+    m = request.args.get("month") or dt.date.today().strftime("%Y-%m")
+    try:
+        dt.datetime.strptime(m, "%Y-%m")
+    except ValueError:
+        abort(400, "Bad month")
+    return m
+
+
+def month_nav(month):
+    d = dt.datetime.strptime(month, "%Y-%m").date()
+    prev = (d - dt.timedelta(days=1)).strftime("%Y-%m")
+    nxt = (d + dt.timedelta(days=32)).strftime("%Y-%m")
+    return prev, nxt
+
+
+def ensure_unlocked(date_or_month):
+    if payroll.is_locked(g.conn, date_or_month):
+        abort(409, f"Payroll for {date_or_month[:7]} is finalized; reopen it before changing attendance.")
+
+
+@app.route("/healthz")
+def healthz():
+    """Container health check: the database answers."""
+    g.conn.execute("SELECT 1").fetchone()
+    return {"ok": True}
+
+
+@app.route("/setup", methods=["GET", "POST"])
+def setup():
+    if g.conn.execute("SELECT 1 FROM app_users").fetchone():
+        return redirect(url_for("login"))
+    if request.method == "POST":
+        u, p = request.form["username"].strip(), request.form["password"]
+        if len(u) < 3 or len(p) < 6:
+            flash("Username min 3 chars, password min 6 chars", "error")
+        else:
+            g.conn.execute("INSERT INTO app_users(username, password_hash, role) VALUES (?,?, 'admin')",
+                           (u, generate_password_hash(p)))
+            flash("Admin account created. Please sign in.", "ok")
+            return redirect(url_for("login"))
+    return render_template("login.html", setup=True)
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        u = g.conn.execute("SELECT * FROM app_users WHERE username = ?", (request.form["username"].strip(),)).fetchone()
+        if u and check_password_hash(u["password_hash"], request.form["password"]):
+            session.clear()
+            session["uid"] = u["id"]
+            session["csrf"] = secrets.token_hex(16)
+            db.audit(g.conn, u["username"], "login")
+            nxt = request.args.get("next") or ""
+            return redirect(nxt if nxt.startswith("/") and not nxt.startswith("//") else url_for("dashboard"))
+        flash("Invalid username or password", "error")
+    return render_template("login.html", setup=False)
+
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
+# ------------------------------------------------------------------ dashboard
+
+@app.route("/")
+def dashboard():
+    today = dt.date.today()
+    day = request.args.get("date")
+    day = dt.date.fromisoformat(day) if day else today
+    emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)")]
+    data = engine.employee_days(g.conn, emps, day, day, g.settings)
+    rows = []
+    stats = {"total": len(emps), "present": 0, "absent": 0, "late": 0, "missing": 0, "off": 0}
+    for e in emps:
+        r = data[e["id"]]["days"][0]
+        rows.append((e, r))
+        if r["punches"] or r["status"] in ("P", "HD"):
+            stats["present"] += 1
+        elif r["status"] in ("WO", "H", "L"):
+            stats["off"] += 1
+        else:
+            stats["absent"] += 1
+        if r["late_min"] or (r["in"] and len(r["punches"]) == 1 and
+                             (r["in"] - engine.shift_bounds(day, r["shift"])[0]).total_seconds() / 60
+                             > int(r["shift"]["grace_in_min"] or 0)):
+            stats["late"] += 1
+        if r["status"] == "MP":
+            stats["missing"] += 1
+    devices = g.conn.execute("SELECT * FROM devices").fetchall()
+    last_punch = g.conn.execute("SELECT MAX(ts) FROM punches").fetchone()[0]
+    total_punches = g.conn.execute("SELECT COUNT(*) FROM punches").fetchone()[0]
+    holiday = g.conn.execute("SELECT * FROM holidays WHERE hdate = ?", (day.isoformat(),)).fetchone()
+    return render_template("dashboard.html", rows=rows, stats=stats, day=day, devices=devices, holiday=holiday,
+                           last_punch=last_punch, total_punches=total_punches,
+                           prev=(day - dt.timedelta(days=1)).isoformat(), nxt=(day + dt.timedelta(days=1)).isoformat())
+
+
+# ------------------------------------------------------------------ devices
+
+@app.route("/devices", methods=["GET", "POST"])
+def devices():
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        if f.get("id"):
+            g.conn.execute("UPDATE devices SET name=?, ip=?, port=?, password=?, active=? WHERE id=?",
+                           (f["name"], f["ip"].strip(), int(f["port"] or 4370), int(f["password"] or 0),
+                            1 if f.get("active") else 0, int(f["id"])))
+        else:
+            g.conn.execute("INSERT INTO devices(name, ip, port, password) VALUES (?,?,?,?)",
+                           (f["name"], f["ip"].strip(), int(f["port"] or 4370), int(f["password"] or 0)))
+        audit("device_save", dict(f))
+        flash("Device saved", "ok")
+        return redirect(url_for("devices"))
+    return render_template("devices.html", devices=g.conn.execute("SELECT * FROM devices").fetchall())
+
+
+@app.route("/devices/<int:did>/<action>", methods=["POST"])
+@admin_required
+def device_action(did, action):
+    dev = g.conn.execute("SELECT * FROM devices WHERE id = ?", (did,)).fetchone() or abort(404)
+    g.conn.commit()  # release locks before the long sync opens its own connection
+    try:
+        if action == "test":
+            info = device.test_connection(dev)
+            flash(f"Connected: serial {info['serial']}, firmware {info['firmware']}, {info['users']} users, device time {info['device_time']}", "ok")
+        elif action == "sync":
+            res = device.sync_device(did, g.user["username"])
+            flash(res.get("message") or res.get("error"), "ok" if res["ok"] else "error")
+        elif action == "settime":
+            device.set_device_time(dev)
+            audit("device_set_time", dev["ip"])
+            flash("Device clock set to this computer's time", "ok")
+        elif action == "delete":
+            g.conn.execute("DELETE FROM devices WHERE id = ?", (did,))
+            flash("Device removed (its punches are kept)", "ok")
+        else:
+            abort(404)
+    except Exception as e:
+        flash(f"Device error: {e}", "error")
+    return redirect(request.form.get("back") or url_for("devices"))
+
+
+# ------------------------------------------------------------------ employees
+
+EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
+              "shift_id", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
+              "esi_no", "notes"]
+EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break"]
+
+
+@app.route("/employees")
+def employees():
+    show = request.args.get("show", "active")
+    q = "SELECT e.*, s.name AS shift_name FROM employees e LEFT JOIN shifts s ON s.id = e.shift_id"
+    if show == "active":
+        q += " WHERE e.active = 1"
+    elif show == "inactive":
+        q += " WHERE e.active = 0"
+    rows = g.conn.execute(q + " ORDER BY CAST(e.device_user_id AS INTEGER)").fetchall()
+    last = {r["device_user_id"]: r["m"] for r in g.conn.execute("SELECT device_user_id, MAX(ts) m FROM punches GROUP BY device_user_id")}
+    return render_template("employees.html", rows=rows, show=show, last=last, shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
+
+
+@app.route("/employees/<int:eid>/quick", methods=["POST"])
+@admin_required
+def employee_quick(eid):
+    """Inline edit from the employees list: the handful of fields people change often."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    name = f.get("name", "").strip() or emp["name"]
+    stype = f.get("salary_type") if f.get("salary_type") in ("monthly", "daily", "hourly") else emp["salary_type"]
+    try:
+        rate = float(f.get("salary_rate") or 0)
+        mult = float(f.get("ot_multiplier") or 1)
+    except ValueError:
+        flash("Rate and OT multiplier must be numbers", "error")
+        return redirect(request.referrer or url_for("employees"))
+    vals = (name, f.get("department", "").strip(), f.get("designation", "").strip(), int(f.get("shift_id") or 0) or None,
+            stype, rate, 1 if f.get("ot_enabled") else 0, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, eid)
+    g.conn.execute("""UPDATE employees SET name=?, department=?, designation=?, shift_id=?, salary_type=?, salary_rate=?,
+                      ot_enabled=?, ot_multiplier=?, active=?, paid_break=? WHERE id=?""", vals)
+    audit("employee_quick_edit", {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "type": stype, "rate": rate,
+                                  "ot": vals[6], "mult": mult, "active": vals[8], "paid_break": vals[9]})
+    flash(f"Saved {name}", "ok")
+    back = f.get("back", "")
+    return redirect((back if back.startswith("/") and not back.startswith("//") else url_for("employees")) + f"#emp-{eid}")
+
+
+@app.route("/employees/<int:eid>", methods=["GET", "POST"])
+@app.route("/employees/new", methods=["GET", "POST"], defaults={"eid": None})
+def employee_edit(eid):
+    emp = None
+    if eid:
+        emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        vals = {k: (f.get(k, "").strip() or None) for k in EMP_FIELDS}
+        if not vals["name"] or not vals["device_user_id"]:
+            flash("Name and Device User ID are required", "error")
+            return redirect(request.url)
+        vals["salary_rate"] = float(vals["salary_rate"] or 0)
+        vals["ot_multiplier"] = float(vals["ot_multiplier"] or 1)
+        vals["salary_type"] = vals["salary_type"] if vals["salary_type"] in ("monthly", "daily", "hourly") else "monthly"
+        vals["shift_id"] = int(vals["shift_id"]) if vals["shift_id"] else None
+        for k in EMP_FLAGS:
+            vals[k] = 1 if f.get(k) else 0
+        vals["weekly_off"] = ",".join(f.getlist("weekly_off"))
+        for k in ("department", "designation", "phone", "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"):
+            vals[k] = vals[k] or ""
+        cols = list(vals)
+        try:
+            if eid:
+                g.conn.execute(f"UPDATE employees SET {', '.join(c + '=?' for c in cols)} WHERE id = ?", [vals[c] for c in cols] + [eid])
+            else:
+                cur = g.conn.execute(f"INSERT INTO employees({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", [vals[c] for c in cols])
+                eid = cur.lastrowid
+        except Exception as e:
+            flash(f"Could not save: {e}", "error")
+            return redirect(request.url)
+        audit("employee_save", {"id": eid, "name": vals["name"], "rate": vals["salary_rate"], "type": vals["salary_type"]})
+        flash("Employee saved", "ok")
+        return redirect(url_for("employees"))
+    shifts = g.conn.execute("SELECT * FROM shifts").fetchall()
+    return render_template("employee_edit.html", emp=emp, shifts=shifts, history=shift_history(eid) if eid else [])
+
+
+def shift_history(eid):
+    return g.conn.execute("""SELECT a.*, s.name AS shift_name, s.start_time, s.end_time FROM employee_shifts a
+                             JOIN shifts s ON s.id = a.shift_id WHERE a.employee_id = ? ORDER BY a.from_date DESC, a.id DESC""",
+                          (eid,)).fetchall()
+
+
+def _ensure_range_unlocked(from_date, to_date):
+    a = dt.date.fromisoformat(from_date)
+    b = dt.date.fromisoformat(to_date) if to_date else dt.date.today()
+    for r in g.conn.execute("SELECT month FROM payroll_runs WHERE status = 'final'"):
+        if a.strftime("%Y-%m") <= r["month"] <= b.strftime("%Y-%m"):
+            abort(409, f"Payroll for {r['month']} is finalized; reopen it before changing shifts in that month.")
+
+
+@app.route("/employees/<int:eid>/shifts", methods=["POST"])
+@admin_required
+def employee_shifts(eid):
+    """Dated shift roster. Several changes per month are allowed; on overlap the newest entry wins."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    if f.get("delete"):
+        row = g.conn.execute("SELECT * FROM employee_shifts WHERE id=? AND employee_id=?", (int(f["delete"]), eid)).fetchone() or abort(404)
+        _ensure_range_unlocked(row["from_date"], row["to_date"])
+        g.conn.execute("DELETE FROM employee_shifts WHERE id = ?", (row["id"],))
+        audit("shift_assign_delete", {"emp": eid, "from": row["from_date"], "to": row["to_date"], "shift": row["shift_id"]})
+        flash("Shift change removed; attendance recalculated", "ok")
+    else:
+        frm, to = f["from_date"], f.get("to_date") or None
+        if to and to < frm:
+            flash("'To' date must be on or after 'From' date", "error")
+            return redirect(f.get("back") or url_for("att_employee", eid=eid))
+        _ensure_range_unlocked(frm, to)
+        shift = g.conn.execute("SELECT * FROM shifts WHERE id = ?", (int(f["shift_id"]),)).fetchone() or abort(400)
+        g.conn.execute("INSERT INTO employee_shifts(employee_id, shift_id, from_date, to_date, reason, created_by) VALUES (?,?,?,?,?,?)",
+                       (eid, shift["id"], frm, to, f.get("reason", ""), g.user["username"]))
+        audit("shift_assign", {"emp": eid, "name": emp["name"], "shift": shift["name"], "from": frm, "to": to, "reason": f.get("reason")})
+        flash(f"{emp['name']}: {shift['name']} shift from {frm}{' to ' + to if to else ' onwards'}. Punches re-paired.", "ok")
+    return redirect(f.get("back") or url_for("att_employee", eid=eid))
+
+
+@app.route("/employees/bulk", methods=["GET", "POST"])
+@admin_required
+def employees_bulk():
+    """Quick grid to set salary type/rate/OT/PF/ESI for many employees at once."""
+    if request.method == "POST":
+        f = request.form
+        n = 0
+        for eid in f.getlist("id"):
+            g.conn.execute("""UPDATE employees SET department=?, salary_type=?, salary_rate=?, ot_enabled=?, ot_multiplier=?,
+                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=? WHERE id=?""",
+                           (f.get(f"department_{eid}", ""), f.get(f"salary_type_{eid}", "monthly"),
+                            float(f.get(f"salary_rate_{eid}") or 0), 1 if f.get(f"ot_enabled_{eid}") else 0,
+                            float(f.get(f"ot_multiplier_{eid}") or 1), 1 if f.get(f"pf_enabled_{eid}") else 0,
+                            1 if f.get(f"esi_enabled_{eid}") else 0, int(f.get(f"shift_id_{eid}") or 0) or None,
+                            1 if f.get(f"paid_break_{eid}") else 0, int(eid)))
+            n += 1
+        audit("employee_bulk_save", f"{n} employees")
+        flash(f"Updated {n} employees", "ok")
+        return redirect(url_for("employees_bulk"))
+    rows = g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    return render_template("employees_bulk.html", rows=rows, shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
+
+
+@app.route("/employees/import", methods=["POST"])
+@admin_required
+def employees_import():
+    """CSV import: device_user_id,name,department,designation,salary_type,salary_rate,... (any EMP_FIELDS headers)."""
+    file = request.files.get("file")
+    if not file:
+        abort(400)
+    reader = csv.DictReader(io.StringIO(file.read().decode("utf-8-sig")))
+    n = 0
+    for row in reader:
+        uid = (row.get("device_user_id") or "").strip()
+        if not uid:
+            continue
+        vals = {k: row[k].strip() for k in EMP_FIELDS + EMP_FLAGS + ["weekly_off"] if k in row and row[k] is not None and row[k].strip() != ""}
+        vals.setdefault("name", f"User {uid}")
+        vals["device_user_id"] = uid
+        exists = g.conn.execute("SELECT id FROM employees WHERE device_user_id = ?", (uid,)).fetchone()
+        if exists:
+            sets = [k for k in vals if k != "device_user_id"]
+            if sets:
+                g.conn.execute(f"UPDATE employees SET {', '.join(k + '=?' for k in sets)} WHERE id=?", [vals[k] for k in sets] + [exists["id"]])
+        else:
+            g.conn.execute(f"INSERT INTO employees({', '.join(vals)}) VALUES ({', '.join('?' * len(vals))})", list(vals.values()))
+        n += 1
+    audit("employee_import", f"{n} rows")
+    flash(f"Imported/updated {n} employees", "ok")
+    return redirect(url_for("employees"))
+
+
+@app.route("/employees/export.csv")
+def employees_export():
+    rows = g.conn.execute("SELECT * FROM employees ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    cols = EMP_FIELDS + EMP_FLAGS + ["weekly_off"]
+    return csv_response("employees.csv", cols, [[r[c] for c in cols] for r in rows])
+
+
+# ------------------------------------------------------------------ shifts / holidays
+
+@app.route("/shifts", methods=["GET", "POST"])
+def shifts():
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        ints = ["break_min", "break_after_min", "grace_in_min", "grace_out_min", "ot_after_min", "ot_round_min", "day_start_hour"]
+        vals = [f["name"], f["start_time"], f["end_time"]] + [int(f.get(k) or 0) for k in ints] + \
+               [int(float(f.get("full_day_hrs") or 8) * 60), int(float(f.get("half_day_hrs") or 4) * 60)]
+        cols = ["name", "start_time", "end_time"] + ints + ["full_day_min", "half_day_min", "break_start"]
+        vals.append(f.get("break_start") or None)
+        if f.get("id"):
+            g.conn.execute(f"UPDATE shifts SET {', '.join(c + '=?' for c in cols)} WHERE id=?", vals + [int(f["id"])])
+        else:
+            g.conn.execute(f"INSERT INTO shifts({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+        audit("shift_save", dict(f))
+        flash("Shift saved", "ok")
+        return redirect(url_for("shifts"))
+    rows = g.conn.execute("SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id = s.id) AS n FROM shifts s").fetchall()
+    return render_template("shifts.html", rows=rows)
+
+
+NATIONAL_HOLIDAYS = [("01-26", "Republic Day"), ("08-15", "Independence Day"), ("10-02", "Gandhi Jayanti")]
+
+
+@app.route("/holidays", methods=["GET", "POST"])
+def holidays():
+    year = request.args.get("year") or str(dt.date.today().year)
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        if f.get("delete"):
+            h = g.conn.execute("SELECT * FROM holidays WHERE id = ?", (int(f["delete"]),)).fetchone() or abort(404)
+            ensure_unlocked(h["hdate"])
+            g.conn.execute("DELETE FROM holidays WHERE id = ?", (h["id"],))
+            flash(f"Removed holiday {h['hdate']} {h['name']}", "ok")
+        elif f.get("action") == "national":
+            n = 0
+            for md, name in NATIONAL_HOLIDAYS:
+                d = f"{year}-{md}"
+                if not payroll.is_locked(g.conn, d):
+                    n += g.conn.execute("INSERT OR IGNORE INTO holidays(hdate, name, paid) VALUES (?,?,1)", (d, name)).rowcount
+            flash(f"Added {n} national holiday(s) for {year} as paid holidays", "ok")
+        else:
+            ensure_unlocked(f["hdate"])
+            g.conn.execute("INSERT OR REPLACE INTO holidays(hdate, name, paid) VALUES (?,?,?)",
+                           (f["hdate"], f["name"].strip() or "Holiday", 1 if f.get("paid") else 0))
+            flash(f"{f['hdate']} marked as {'paid' if f.get('paid') else 'unpaid'} holiday: {f['name']}. Everyone's attendance recalculated.", "ok")
+        audit("holiday_save", {k: v for k, v in f.items() if k != "csrf"})
+        back = f.get("back", "")
+        return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("holidays", year=year))
+    rows = g.conn.execute("SELECT * FROM holidays WHERE hdate LIKE ? ORDER BY hdate", (year + "%",)).fetchall()
+    return render_template("holidays.html", rows=rows, year=year, national=NATIONAL_HOLIDAYS)
+
+
+# ------------------------------------------------------------------ attendance
+
+@app.route("/attendance/daily")
+def att_daily():
+    day = dt.date.fromisoformat(request.args.get("date") or dt.date.today().isoformat())
+    return redirect(url_for("dashboard", date=day.isoformat()))
+
+
+@app.route("/attendance/monthly")
+def att_monthly():
+    month = cur_month()
+    rows = payroll.compute_month(g.conn, month)
+    start, end = engine.month_range(month)
+    dates = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    prev, nxt = month_nav(month)
+    hol = {r["hdate"]: r for r in g.conn.execute("SELECT * FROM holidays WHERE hdate LIKE ?", (month + "%",))}
+    return render_template("muster.html", rows=rows, dates=dates, month=month, prev=prev, nxt=nxt, hol=hol)
+
+
+@app.route("/attendance/employee/<int:eid>")
+def att_employee(eid):
+    month = cur_month()
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    rows = payroll.compute_month(g.conn, month, employee_ids={eid})
+    if not rows:
+        start, end = engine.month_range(month)
+        d = engine.employee_days(g.conn, [dict(emp)], start, end, g.settings)[eid]
+        summ = engine.summarize(d["days"], d["shift"], g.settings, emp["salary_type"])
+        row = {"emp": dict(emp), "days": d["days"], "summary": summ, "shift": d["shift"],
+               "pay": payroll.calculate(dict(emp), summ, month, g.settings)}
+    else:
+        row = rows[0]
+    prev, nxt = month_nav(month)
+    locked = payroll.run_status(g.conn, month) == "final"
+    others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    return render_template("employee_month.html", row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
+                           history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
+
+
+TS_FMT = "%Y-%m-%d %H:%M:%S"
+
+
+def _punch_work_date(emp, ts):
+    shift = g.conn.execute("SELECT * FROM shifts WHERE id = ?", (emp["shift_id"],)).fetchone() \
+        or g.conn.execute("SELECT * FROM shifts ORDER BY id LIMIT 1").fetchone()
+    return engine.work_date_of(ts, shift).isoformat()
+
+
+def add_manual_punch(emp, ts, role, reason):
+    """Insert (or re-role) a punch. Pairing is recomputed from the whole stream on every read,
+    so all following days re-pair automatically."""
+    ensure_unlocked(_punch_work_date(emp, ts))
+    s = ts.strftime(TS_FMT)
+    note = f"by {g.user['username']}: {reason}"
+    cur = g.conn.execute("INSERT OR IGNORE INTO punches(device_user_id, ts, source, note, role) VALUES (?,?, 'manual', ?, ?)",
+                         (emp["device_user_id"], s, note, role))
+    if not cur.rowcount:
+        g.conn.execute("UPDATE punches SET role=?, deleted=0 WHERE device_user_id=? AND ts=?", (role, emp["device_user_id"], s))
+    audit("punch_add", {"emp": emp["id"], "ts": s, "role": role, "reason": reason})
+
+
+def set_punch_role(emp, punch_id, role):
+    p = g.conn.execute("SELECT * FROM punches WHERE id=? AND device_user_id=?", (punch_id, emp["device_user_id"])).fetchone() or abort(404)
+    ensure_unlocked(_punch_work_date(emp, dt.datetime.strptime(p["ts"], TS_FMT)))
+    g.conn.execute("UPDATE punches SET role=? WHERE id=?", (role or None, punch_id))
+    audit("punch_role", {"emp": emp["id"], "ts": p["ts"], "role": role or "auto"})
+
+
+def fix_shift(emp, work_date, tin, tout, reason):
+    """Replace a day's shift with confirmed IN/OUT punches. The day's old punches that fall outside the new
+    times are marked 'ignore' (still visible, restorable) so they don't linger as unpaired punches."""
+    if tout <= tin or (tout - tin).total_seconds() > float(g.settings.get("max_duty_hours") or 26) * 3600:
+        return "Out must be after In and within the maximum duty length"
+    rec = engine.employee_days(g.conn, [dict(emp)], work_date, work_date, g.settings)[emp["id"]]["days"][0]
+    for sess in rec["sessions"]:
+        for pid, ts in zip(sess["ids"], sess["punches"]):
+            if pid and (ts < tin or ts > tout):
+                set_punch_role(emp, pid, "ignore")
+    g.conn.execute("UPDATE punches SET role=NULL WHERE device_user_id=? AND ts > ? AND ts < ? AND role IN ('in','out')",
+                   (emp["device_user_id"], tin.strftime(TS_FMT), tout.strftime(TS_FMT)))
+    add_manual_punch(emp, tin, "in", reason)
+    add_manual_punch(emp, tout, "out", reason)
+    return None
+
+
+def _dtl(v):
+    """Parse an <input type=datetime-local> value."""
+    return dt.datetime.strptime(v.replace("T", " ")[:16], "%Y-%m-%d %H:%M")
+
+
+@app.route("/attendance/employee/<int:eid>/penalty", methods=["POST"])
+@admin_required
+def late_penalty(eid):
+    """Late-comer penalty, chosen day by day on the employee's sheet: OT minutes removed for that day."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f.get("month") or cur_month()
+    ensure_unlocked(f.get("date") or month)
+    if f.get("action") in ("all", "clear_all"):
+        start, end = engine.month_range(month)
+        days = engine.employee_days(g.conn, [dict(emp)], start, end, g.settings)[eid]["days"]
+        n = 0
+        for d in days:
+            ds = d["date"].isoformat()
+            if f["action"] == "clear_all":
+                n += g.conn.execute("DELETE FROM late_penalties WHERE employee_id=? AND work_date=?", (eid, ds)).rowcount
+            elif d["late_min"] and not d["late_penalty_set"] and d["late_penalty_suggest"] > 0:
+                g.conn.execute("INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by) VALUES (?,?,?,?,?)",
+                               (eid, ds, d["late_penalty_suggest"], f"late {d['late_min']}m", g.user["username"]))
+                n += 1
+        audit("late_penalty_" + f["action"], {"emp": eid, "month": month, "days": n})
+        flash(f"{'Removed' if f['action'] == 'clear_all' else 'Applied'} late penalty on {n} day(s)", "ok")
+    else:
+        ds = f["date"]
+        try:
+            minutes = int(float(f.get("minutes") or 0))
+        except ValueError:
+            minutes = 0
+        if minutes > 0:
+            g.conn.execute("""INSERT INTO late_penalties(employee_id, work_date, minutes, note, created_by) VALUES (?,?,?,?,?)
+                              ON CONFLICT(employee_id, work_date) DO UPDATE SET minutes=excluded.minutes, created_by=excluded.created_by""",
+                           (eid, ds, minutes, f.get("note", ""), g.user["username"]))
+        else:
+            g.conn.execute("DELETE FROM late_penalties WHERE employee_id=? AND work_date=?", (eid, ds))
+        audit("late_penalty", {"emp": eid, "date": ds, "minutes": minutes})
+    back = f.get("back", "")
+    return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month))
+
+
+@app.route("/attendance/day/<int:eid>/<date>", methods=["GET", "POST"])
+def att_day(eid, date):
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    d = dt.date.fromisoformat(date)
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        act = f.get("action")
+        if act in ("override", "clear_override", "leave", "clear_leave"):
+            ensure_unlocked(date)
+        if act == "override":
+            status = f.get("status") or None
+            if not status:
+                g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
+            else:
+                g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by)
+                                  VALUES (?,?,?,NULL,NULL,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"]))
+            audit("day_override", {"emp": eid, "date": date, "status": status, "reason": f.get("reason")})
+        elif act == "clear_override":
+            g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
+            audit("day_override_clear", {"emp": eid, "date": date})
+        elif act == "leave":
+            g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason)
+                              VALUES (?,?,?,?,?,?)""", (eid, date, f.get("leave_type", "CL"), 1 if f.get("paid") else 0,
+                                                       1 if f.get("half_day") else 0, f.get("reason", "")))
+            audit("leave_add", {"emp": eid, "date": date, "type": f.get("leave_type")})
+        elif act == "clear_leave":
+            g.conn.execute("DELETE FROM leaves WHERE employee_id=? AND leave_date=?", (eid, date))
+            audit("leave_clear", {"emp": eid, "date": date})
+        elif act == "fix_session":
+            err = fix_shift(emp, d, _dtl(f["in_dt"]), _dtl(f["out_dt"]), f.get("reason", ""))
+            if err:
+                flash(err, "error")
+                return redirect(request.url)
+        elif act == "quick":
+            # One-row fix from the month view: optional status + optional corrected in/out.
+            status = f.get("status") or None
+            if status != (f.get("orig_status") or None):
+                ensure_unlocked(date)
+                if status:
+                    g.conn.execute("""INSERT OR REPLACE INTO day_overrides(employee_id, work_date, status, in_time, out_time, reason, created_by)
+                                      VALUES (?,?,?,NULL,NULL,?,?)""", (eid, date, status, f.get("reason", ""), g.user["username"]))
+                else:
+                    g.conn.execute("DELETE FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date))
+                audit("day_override", {"emp": eid, "date": date, "status": status, "reason": f.get("reason"), "via": "quick"})
+            tin, tout = f.get("in_dt"), f.get("out_dt")
+            if tin and tout and (tin != f.get("orig_in") or tout != f.get("orig_out")):
+                err = fix_shift(emp, d, _dtl(tin), _dtl(tout), f.get("reason", "") or "quick fix")
+                if err:
+                    flash(err, "error")
+                    return redirect(f.get("back") or request.url)
+        elif act == "apply_suggest":
+            add_manual_punch(emp, dt.datetime.strptime(f["ts"], TS_FMT), f["role"], "suggested fix accepted")
+            if f.get("orphan_id") and f["orphan_id"] != "None":
+                set_punch_role(emp, int(f["orphan_id"]), f["orphan_role"])
+        elif act == "add_punch":
+            add_manual_punch(emp, _dtl(f["ts"]), f.get("role") or None, f.get("reason", ""))
+        elif act == "set_role":
+            set_punch_role(emp, int(f["punch_id"]), f.get("role"))
+        elif act in ("delete_punch", "restore_punch"):
+            set_punch_role(emp, int(f["punch_id"]), "ignore" if act == "delete_punch" else None)
+        flash("Saved - following days were re-paired automatically", "ok")
+        return redirect(f.get("back") or request.url)
+    data = engine.employee_days(g.conn, [dict(emp)], d, d, g.settings)[eid]
+    rec = data["days"][0]
+    lo = dt.datetime.combine(d - dt.timedelta(days=1), dt.time(12))
+    hi = dt.datetime.combine(d + dt.timedelta(days=2), dt.time(12))
+    raw = g.conn.execute("SELECT * FROM punches WHERE device_user_id=? AND ts BETWEEN ? AND ? ORDER BY ts",
+                         (emp["device_user_id"], lo.strftime(TS_FMT), hi.strftime(TS_FMT))).fetchall()
+    mine = {t.strftime(TS_FMT) for s in rec["sessions"] for t in s["punches"]}
+    ov = g.conn.execute("SELECT * FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date)).fetchone()
+    lv = g.conn.execute("SELECT * FROM leaves WHERE employee_id=? AND leave_date=?", (eid, date)).fetchone()
+    first = rec["sessions"][0] if rec["sessions"] else None
+    sug = rec["suggest"]
+    day_shift = rec["shift"]
+    default_in = first["start"] if first else dt.datetime.combine(d, engine.parse_hm(day_shift["start_time"]))
+    if first and first["end"]:
+        default_out = first["end"]
+    elif sug and sug["role"] == "out":
+        default_out = sug["ts"]
+    else:
+        default_out = engine.shift_bounds(d, day_shift)[1]
+    if sug and sug["role"] == "in":
+        default_in, default_out = sug["ts"], sug["of"]
+    return render_template("day_edit.html", emp=emp, d=d, rec=rec, raw=raw, mine=mine, ov=ov, lv=lv, shift=day_shift,
+                           shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
+                           default_in=default_in, default_out=default_out, typical=data["typical"],
+                           locked=payroll.is_locked(g.conn, date), back=request.args.get("back", ""))
+
+
+def _exception_items(rows):
+    long_h = float(g.settings.get("long_duty_flag_hours") or 16)
+    items = []
+    for r in rows:
+        for d in r["days"]:
+            if d["override"]:
+                continue
+            kind = reason = None
+            if d["status"] == "MP":
+                kind, reason = "mp", "Missing punch"
+            elif "unpaired punch" in d["flags"]:
+                kind, reason = "mp", "Extra unpaired punch"
+            elif "long duty" in d["flags"]:
+                h = max((s["end"] - s["start"]).total_seconds() / 3600 for s in d["sessions"] if not s["orphan"])
+                kind, reason = "long", f"Long duty {h:.1f} h"
+            elif "too short" in d["flags"]:
+                kind, reason = "short", f"Too short ({engine.fmt_min(d['worked_min'])} worked)"
+            if kind:
+                long_s = next((s for s in d["sessions"] if not s["orphan"] and
+                               (s["end"] - s["start"]).total_seconds() / 3600 >= long_h), None) if kind == "long" else None
+                orphan = next((s for s in d["sessions"] if s["orphan"]), None)
+                items.append({"emp": r["emp"], "d": d, "kind": kind, "reason": reason, "long": long_s, "orphan": orphan})
+    return items
+
+
+@app.route("/exceptions", methods=["GET", "POST"])
+def exceptions():
+    month = cur_month()
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        emps = {}
+
+        def emp_of(eid):
+            if eid not in emps:
+                emps[eid] = g.conn.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone() or abort(404)
+            return emps[eid]
+        if f.get("action") == "apply_suggestions":
+            # value: "<emp id>|<suggested ts>|<in|out>|<orphan punch id>|<orphan role>"
+            n = 0
+            for v in f.getlist("pick"):
+                eid, ts, role, pid, orole = v.split("|")
+                emp = emp_of(int(eid))
+                add_manual_punch(emp, dt.datetime.strptime(ts, TS_FMT), role, "suggested fix accepted")
+                if pid and pid != "None":
+                    set_punch_role(emp, int(pid), orole)
+                n += 1
+            flash(f"Applied {n} suggested punch(es); attendance re-paired", "ok")
+        elif f.get("action") == "confirm_long":
+            emp = emp_of(int(f["eid"]))
+            set_punch_role(emp, int(f["start_id"]), "in")
+            set_punch_role(emp, int(f["end_id"]), "out")
+            flash("Long duty confirmed", "ok")
+        elif f.get("action") == "confirm_long_all":
+            n = 0
+            for v in f.getlist("pick_long"):
+                eid, sid, eid2 = v.split("|")
+                emp = emp_of(int(eid))
+                set_punch_role(emp, int(sid), "in")
+                set_punch_role(emp, int(eid2), "out")
+                n += 1
+            flash(f"Confirmed {n} long duties", "ok")
+        elif f.get("action") == "split_long":
+            emp = emp_of(int(f["eid"]))
+            set_punch_role(emp, int(f["end_id"]), "in")  # that 'out' was really the next arrival
+            flash("Split: the later punch is now an arrival; the earlier one shows as a missing punch with a suggestion", "ok")
+        return redirect(url_for("exceptions", month=month, kind=request.args.get("kind", "")))
+    rows = payroll.compute_month(g.conn, month)
+    items = _exception_items(rows)
+    kind = request.args.get("kind", "")
+    counts = {k: sum(1 for i in items if i["kind"] == k) for k in ("mp", "long", "short")}
+    if kind:
+        items = [i for i in items if i["kind"] == kind]
+    prev, nxt = month_nav(month)
+    return render_template("exceptions.html", items=items, month=month, prev=prev, nxt=nxt, counts=counts, kind=kind)
+
+
+@app.route("/leaves", methods=["GET", "POST"])
+def leaves():
+    month = cur_month()
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        if f.get("delete"):
+            g.conn.execute("DELETE FROM leaves WHERE id = ?", (int(f["delete"]),))
+        else:
+            a, b = dt.date.fromisoformat(f["from"]), dt.date.fromisoformat(f.get("to") or f["from"])
+            n = 0
+            while a <= b:
+                ensure_unlocked(a.isoformat())
+                g.conn.execute("""INSERT OR REPLACE INTO leaves(employee_id, leave_date, leave_type, paid, half_day, reason)
+                                  VALUES (?,?,?,?,?,?)""", (int(f["employee_id"]), a.isoformat(), f["leave_type"],
+                                                           1 if f.get("paid") else 0, 1 if f.get("half_day") else 0, f.get("reason", "")))
+                a += dt.timedelta(days=1)
+                n += 1
+            flash(f"{n} leave day(s) recorded", "ok")
+        audit("leave_save", dict(f))
+        return redirect(url_for("leaves", month=month))
+    rows = g.conn.execute("""SELECT l.*, e.name, e.device_user_id FROM leaves l JOIN employees e ON e.id = l.employee_id
+                             WHERE l.leave_date LIKE ? ORDER BY l.leave_date, e.name""", (month + "%",)).fetchall()
+    emps = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY name").fetchall()
+    year = month[:4]
+    balance = g.conn.execute("""SELECT e.name, l.leave_type, SUM(CASE WHEN l.half_day THEN 0.5 ELSE 1 END) AS n
+                                FROM leaves l JOIN employees e ON e.id=l.employee_id WHERE l.leave_date LIKE ?
+                                GROUP BY e.name, l.leave_type ORDER BY e.name""", (year + "%",)).fetchall()
+    prev, nxt = month_nav(month)
+    return render_template("leaves.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt, balance=balance, year=year)
+
+
+@app.route("/adjustments", methods=["GET", "POST"])
+def adjustments():
+    month = cur_month()
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        ensure_unlocked(month)
+        f = request.form
+        if f.get("delete"):
+            g.conn.execute("DELETE FROM adjustments WHERE id = ?", (int(f["delete"]),))
+        else:
+            g.conn.execute("INSERT INTO adjustments(employee_id, month, kind, amount, note) VALUES (?,?,?,?,?)",
+                           (int(f["employee_id"]), month, f["kind"], float(f["amount"]), f.get("note", "")))
+        audit("adjustment_save", dict(f))
+        return redirect(url_for("adjustments", month=month))
+    rows = g.conn.execute("""SELECT a.*, e.name, e.device_user_id FROM adjustments a JOIN employees e ON e.id=a.employee_id
+                             WHERE a.month = ? ORDER BY e.name""", (month,)).fetchall()
+    emps = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY name").fetchall()
+    prev, nxt = month_nav(month)
+    return render_template("adjustments.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt)
+
+
+# ------------------------------------------------------------------ payroll
+
+def payroll_rows(month):
+    """Finalized months come from the saved snapshot; others are computed live."""
+    run, saved = payroll.load_saved(g.conn, month)
+    if run and run["status"] == "final":
+        return run, [{"emp": dict(it["emp"], id=it["employee_id"]), "summary": it["summary"], "pay": it["pay"]} for it in saved]
+    return run, payroll.compute_month(g.conn, month)
+
+
+@app.route("/payroll", methods=["GET", "POST"])
+def payroll_view():
+    month = cur_month()
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        act = request.form.get("action")
+        try:
+            if act in ("save", "finalize"):
+                _, n = payroll.save_run(g.conn, month, g.user["username"], finalize=(act == "finalize"))
+                flash(f"Payroll {month} {'finalized and locked' if act == 'finalize' else 'saved as draft'} ({n} employees)", "ok")
+            elif act == "reopen":
+                g.conn.execute("UPDATE payroll_runs SET status='draft' WHERE month=?", (month,))
+                audit("payroll_reopen", month)
+                flash(f"Payroll {month} reopened", "ok")
+        except ValueError as e:
+            flash(str(e), "error")
+        return redirect(url_for("payroll_view", month=month))
+    run, rows = payroll_rows(month)
+    totals = {k: sum(r["pay"][k] for r in rows) for k in ("basic", "ot_pay", "allowance", "bonus", "gross", "pf", "esi",
+                                                          "advance", "tds", "other_deduction", "total_deductions", "net")}
+    unpriced = [r for r in rows if not r["pay"]["rate"]]
+    prev, nxt = month_nav(month)
+    return render_template("payroll.html", rows=rows, run=run, month=month, totals=totals, prev=prev, nxt=nxt, unpriced=unpriced)
+
+
+@app.route("/payslip/<int:eid>")
+def payslip(eid):
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    rows = [r for r in rows if r["emp"]["id"] == eid]
+    if not rows:
+        abort(404, "No payroll data for this employee in this month")
+    return render_template("payslips.html", rows=rows, month=month)
+
+
+@app.route("/payslips")
+def payslips():
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    return render_template("payslips.html", rows=[r for r in rows if r["pay"]["net"] or r["summary"]["payable_days"]], month=month)
+
+
+# ------------------------------------------------------------------ exports
+
+def csv_response(name, header, rows):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(header)
+    w.writerows(rows)
+    return Response("﻿" + buf.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": f"attachment; filename={name}"})
+
+
+PAY_COLS = [("Emp ID", lambda r: r["emp"]["device_user_id"]), ("Name", lambda r: r["emp"]["name"]),
+            ("Department", lambda r: r["emp"].get("department", "")), ("Salary Type", lambda r: r["pay"]["salary_type"]),
+            ("Rate", lambda r: r["pay"]["rate"]), ("Present", lambda r: r["summary"].get("cnt_P", 0)),
+            ("Half Days", lambda r: r["summary"].get("cnt_HD", 0)), ("Absent", lambda r: r["summary"].get("cnt_A", 0)),
+            ("Weekly Off", lambda r: r["summary"].get("cnt_WO", 0)), ("Worked on Off", lambda r: r["summary"].get("cnt_WOP", 0) + r["summary"].get("cnt_HP", 0)),
+            ("Leaves", lambda r: r["summary"].get("leave_credit", 0)), ("Missing Punch", lambda r: r["summary"].get("cnt_MP", 0)),
+            ("Late Marks", lambda r: r["summary"].get("late_count", 0)), ("Payable Days", lambda r: r["summary"]["payable_days"]),
+            ("Worked Hrs", lambda r: round(r["summary"]["worked_min"] / 60, 2)), ("OT Hrs", lambda r: r["pay"]["ot_hours"]),
+            ("Basic Earned", lambda r: r["pay"]["basic"]), ("OT Pay", lambda r: r["pay"]["ot_pay"]),
+            ("Allowance", lambda r: r["pay"]["allowance"]), ("Bonus", lambda r: r["pay"]["bonus"]), ("Gross", lambda r: r["pay"]["gross"]),
+            ("PF", lambda r: r["pay"]["pf"]), ("ESI", lambda r: r["pay"]["esi"]), ("Advance", lambda r: r["pay"]["advance"]),
+            ("TDS", lambda r: r["pay"]["tds"]), ("Other Ded.", lambda r: r["pay"]["other_deduction"]),
+            ("Total Ded.", lambda r: r["pay"]["total_deductions"]), ("Net Pay", lambda r: r["pay"]["net"]),
+            ("Bank", lambda r: r["emp"].get("bank_name", "")), ("Account", lambda r: r["emp"].get("bank_account", "")),
+            ("IFSC", lambda r: r["emp"].get("ifsc", ""))]
+
+
+def xlsx_response(name, sheets):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    wb = Workbook()
+    wb.remove(wb.active)
+    for title, header, rows in sheets:
+        ws = wb.create_sheet(title[:31])
+        ws.append(header)
+        for c in ws[1]:
+            c.font = Font(bold=True, color="FFFFFF")
+            c.fill = PatternFill("solid", fgColor="1F4E79")
+        for r in rows:
+            ws.append(list(r))
+        ws.freeze_panes = "C2"
+        for col in ws.columns:
+            width = max(len(str(c.value or "")) for c in col)
+            ws.column_dimensions[col[0].column_letter].width = min(max(width + 2, 5), 30)
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return send_file(buf, as_attachment=True, download_name=name,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/export/payroll.<fmt>")
+def export_payroll(fmt):
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    header = [c[0] for c in PAY_COLS]
+    data = [[f(r) for _, f in PAY_COLS] for r in rows]
+    if fmt == "csv":
+        return csv_response(f"payroll_{month}.csv", header, data)
+    return xlsx_response(f"payroll_{month}.xlsx", [(f"Payroll {month}", header, data)])
+
+
+def report_rows(month, eid=None):
+    """Live day tables; for a finalized month the frozen summary/pay snapshot is used for the money."""
+    rows = payroll.compute_month(g.conn, month, employee_ids={eid} if eid else None)
+    run, saved = payroll.load_saved(g.conn, month)
+    if run and run["status"] == "final":
+        snap = {it["employee_id"]: it for it in saved}
+        for r in rows:
+            if r["emp"]["id"] in snap:
+                r["summary"], r["pay"] = snap[r["emp"]["id"]]["summary"], snap[r["emp"]["id"]]["pay"]
+    return run, rows
+
+
+@app.route("/reports/attendance")
+def attendance_report():
+    """Printable attendance statement per employee, with the salary calculation written out."""
+    month = cur_month()
+    eid = request.args.get("eid", type=int)
+    run, rows = report_rows(month, eid)
+    if not eid:
+        rows = [r for r in rows if r["summary"]["worked_min"] or r["summary"]["payable_days"]]
+    for r in rows:
+        r["calc"] = reports.calc_lines(r, g.settings, g.settings.get("currency", "₹"))
+        r["credit"] = [reports.day_credit(d, r["summary"].get("wo_paid", 1)) for d in r["days"]]
+    return render_template("attendance_report.html", rows=rows, month=month, run=run)
+
+
+@app.route("/export/payroll_formulas.xlsx")
+def export_formula_xlsx():
+    month = cur_month()
+    eid = request.args.get("eid", type=int)
+    _, rows = report_rows(month, eid)
+    buf = reports.build_workbook(rows, month, g.settings, g.settings.get("company_name", ""))
+    name = f"payroll_formulas_{month}" + (f"_{rows[0]['emp']['device_user_id']}" if eid and rows else "") + ".xlsx"
+    return send_file(buf, as_attachment=True, download_name=name,
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+@app.route("/export/bank.csv")
+def export_bank():
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    return csv_response(f"bank_transfer_{month}.csv", ["Emp ID", "Name", "Bank", "Account No", "IFSC", "Amount"],
+                        [[r["emp"]["device_user_id"], r["emp"]["name"], r["emp"].get("bank_name", ""), r["emp"].get("bank_account", ""),
+                          r["emp"].get("ifsc", ""), r["pay"]["net"]] for r in rows if r["pay"]["net"] > 0])
+
+
+@app.route("/export/muster.xlsx")
+def export_muster():
+    month = cur_month()
+    rows = payroll.compute_month(g.conn, month)
+    start, end = engine.month_range(month)
+    dates = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
+    header = ["Emp ID", "Name"] + [d.strftime("%d %a") for d in dates] + ["Present", "Half", "Absent", "WO", "WOP", "MP", "Payable", "Worked Hrs", "OT Hrs"]
+    status_rows, hours_rows = [], []
+    for r in rows:
+        s = r["summary"]
+        tail = [s.get("cnt_P", 0), s.get("cnt_HD", 0), s.get("cnt_A", 0), s.get("cnt_WO", 0), s.get("cnt_WOP", 0),
+                s.get("cnt_MP", 0), s["payable_days"], round(s["worked_min"] / 60, 2), round(s["ot_min"] / 60, 2)]
+        status_rows.append([r["emp"]["device_user_id"], r["emp"]["name"]] + [d["status"] for d in r["days"]] + tail)
+        hours_rows.append([r["emp"]["device_user_id"], r["emp"]["name"]] +
+                          [(f"{d['in']:%H:%M}-{d['out']:%H:%M} ({engine.fmt_min(d['worked_min'])})" if d["in"] and d["out"]
+                            else (f"{d['in']:%H:%M} ?" if d["in"] else "")) for d in r["days"]] + tail)
+    return xlsx_response(f"muster_{month}.xlsx", [("Status", header, status_rows), ("In-Out Hours", header, hours_rows)])
+
+
+@app.route("/export/punches.csv")
+def export_punches():
+    month = cur_month()
+    rows = g.conn.execute("""SELECT p.device_user_id, e.name, p.ts, p.source, p.deleted FROM punches p
+                             LEFT JOIN employees e ON e.device_user_id = p.device_user_id WHERE p.ts LIKE ? ORDER BY p.ts""",
+                          (month + "%",)).fetchall()
+    return csv_response(f"punches_{month}.csv", ["Emp ID", "Name", "Timestamp", "Source", "Deleted"], [list(r) for r in rows])
+
+
+# ------------------------------------------------------------------ settings / users / audit
+
+@app.route("/settings", methods=["GET", "POST"])
+def settings_view():
+    if request.method == "POST":
+        if g.user["role"] != "admin":
+            abort(403)
+        f = request.form
+        act = f.get("action")
+        if act == "settings":
+            for k in db.DEFAULT_SETTINGS:
+                if k in f:
+                    g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, f[k].strip()))
+            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule"):
+                g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, "1" if f.get(k) else "0"))
+            audit("settings_save", {k: f[k] for k in f if k != "csrf"})
+            flash("Settings saved", "ok")
+        elif act == "add_user":
+            if len(f["password"]) < 6:
+                flash("Password must be at least 6 characters", "error")
+            else:
+                try:
+                    g.conn.execute("INSERT INTO app_users(username, password_hash, role) VALUES (?,?,?)",
+                                   (f["username"].strip(), generate_password_hash(f["password"]), f.get("role", "viewer")))
+                    audit("user_add", f["username"])
+                    flash("User added", "ok")
+                except Exception as e:
+                    flash(f"Could not add user: {e}", "error")
+        elif act == "delete_user":
+            if int(f["uid"]) == g.user["id"]:
+                flash("You cannot delete yourself", "error")
+            else:
+                g.conn.execute("DELETE FROM app_users WHERE id=?", (int(f["uid"]),))
+                audit("user_delete", f["uid"])
+        return redirect(url_for("settings_view"))
+    users = g.conn.execute("SELECT id, username, role, created_at FROM app_users").fetchall()
+    return render_template("settings.html", users=users)
+
+
+@app.route("/password", methods=["POST"])
+def change_password():
+    f = request.form
+    if not check_password_hash(g.user["password_hash"], f["old"]):
+        flash("Current password is wrong", "error")
+    elif len(f["new"]) < 6:
+        flash("New password must be at least 6 characters", "error")
+    else:
+        g.conn.execute("UPDATE app_users SET password_hash=? WHERE id=?", (generate_password_hash(f["new"]), g.user["id"]))
+        audit("password_change")
+        flash("Password changed", "ok")
+    return redirect(url_for("settings_view"))
+
+
+@app.route("/audit")
+def audit_view():
+    rows = g.conn.execute("SELECT * FROM audit_log ORDER BY id DESC LIMIT 500").fetchall()
+    return render_template("audit.html", rows=rows)
+
+
+@app.route("/backup")
+@admin_required
+def backup():
+    g.conn.commit()
+    path = os.path.join(os.path.dirname(db.DB_PATH), f"backup_{dt.datetime.now():%Y%m%d_%H%M%S}.db")
+    src = db.connect()
+    dst = __import__("sqlite3").connect(path)
+    src.backup(dst)
+    dst.close()
+    src.close()
+    audit("backup", path)
+    return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+
+
+@app.errorhandler(400)
+@app.errorhandler(403)
+@app.errorhandler(404)
+@app.errorhandler(409)
+def http_error(e):
+    return render_template("error.html", e=e), e.code
+
+
+def create_app(start_sync=True):
+    db.init_db()
+    if start_sync:
+        device.start_auto_sync()
+    return app

@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Attendance statements {{ month }}{% endblock %}
+{% block body %}
+<div class="toolbar noprint">
+  <button onclick="window.print()">Print</button>
+  <a class="btn light" href="{{ url_for('export_formula_xlsx', month=month, eid=request.args.get('eid')) }}">Excel with formulas</a>
+  <span class="muted">{{ rows|length }} employee statement(s) · each prints on its own page{% if run and run.status == 'final' %} · salary figures from the finalized payroll{% endif %}</span>
+</div>
+<style>
+  .stmt { background:#fff; border:1px solid #999; padding:14px 18px; margin:0 auto 22px; max-width:1100px; page-break-after:always; }
+  .stmt h3 { margin:0; } .stmt table { font-size:11.5px; } .stmt th, .stmt td { padding:2px 5px; border:1px solid #ccc; }
+  .stmt .meta td { border:0; padding:1px 8px 1px 0; }
+  .stmt .calc td:first-child { font-weight:600; white-space:nowrap; } .stmt .calc td:last-child { text-align:right; font-weight:600; white-space:nowrap; }
+  .stmt tr.off td { color:#666; background:#f6f6f6; }
+  @media print { .stmt { border:0; padding:0; margin:0; max-width:none; } @page { size: A4 landscape; margin: 10mm; } }
+</style>
+{% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}{% set e = r.emp %}
+<div class="stmt">
+  <div class="row" style="justify-content:space-between;align-items:flex-start">
+    <div><h3>{{ settings.company_name }}</h3><div class="small">{{ settings.company_address }}</div></div>
+    <div style="text-align:right"><b>Attendance &amp; salary statement</b><br>{{ month }}</div>
+  </div>
+  <table class="meta" style="margin:8px 0;width:auto"><tr>
+    <td>Employee: <b>{{ e.name }}</b></td><td>ID: <b>{{ e.emp_code or e.device_user_id }}</b></td><td>Department: {{ e.department or '-' }}</td>
+    <td>Shift: {{ r.shift.name }} {{ r.shift.start_time }}–{{ r.shift.end_time }}</td>
+    <td>Salary: {{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td></tr></table>
+  <table>
+    <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early</th>
+      <th class="n">OT</th><th class="n">Late pen.</th><th class="n">Day credit</th><th>Notes</th></tr>
+    {% for d in r.days %}
+    <tr class="{{ 'off' if d.status in ('WO','H','-') }}">
+      <td>{{ d.date.strftime('%d') }}</td><td>{{ d.date.strftime('%a') }}</td><td>{{ d.shift.name if d.shift else '' }}</td><td><b>{{ d.status }}</b></td>
+      <td>{{ d['in'].strftime('%H:%M') if d['in'] else '' }}</td>
+      <td>{{ d.out.strftime('%H:%M') if d.out else '' }}{{ ' +1' if d.out and d.out.date() > d.date }}</td>
+      <td class="n">{{ fmt_min(d.worked_min) if d.worked_min else '' }}</td>
+      <td class="n">{{ d.late_min ~ 'm' if d.late_min else '' }}</td><td class="n">{{ d.early_min ~ 'm' if d.early_min else '' }}</td>
+      <td class="n">{{ fmt_min(d.ot_min) if d.ot_min else '' }}</td>
+      <td class="n">{{ d.late_penalty_min ~ 'm' if d.late_penalty_min else '' }}</td>
+      <td class="n">{{ r.credit[loop.index0]|days if r.credit[loop.index0] else '' }}</td>
+      <td class="small">{{ d.holiday or '' }} {{ d.leave_type or '' }} {{ d.flags|join(', ') }}{{ ' (corrected)' if d.override }}</td>
+    </tr>{% endfor %}
+    <tr><th colspan="6">Totals</th><th class="n">{{ fmt_min(s.worked_min) }}</th><th class="n">{{ s.get('late_count',0)|days }}×</th>
+      <th class="n">{{ s.get('early_count',0)|days }}×</th><th class="n">{{ fmt_min(s.get('ot_min_gross', s.ot_min)) }}</th>
+      <th class="n">{{ fmt_min(s.get('late_penalty_min',0)) }}</th><th class="n">{{ (r.credit|sum)|days }}</th><th></th></tr>
+  </table>
+  <div class="row" style="align-items:flex-start;margin-top:8px">
+    <table style="width:auto">
+      <tr><th>P</th><th>HD</th><th>A</th><th>MP</th><th>WO</th><th>WOP/HP</th><th>H</th><th>Leave</th><th>Late</th><th>Payable</th></tr>
+      <tr><td>{{ s.get('cnt_P',0)|days }}</td><td>{{ s.get('cnt_HD',0)|days }}</td><td>{{ s.get('cnt_A',0)|days }}</td><td>{{ s.get('cnt_MP',0)|days }}</td>
+        <td>{{ s.get('cnt_WO',0)|days }}</td><td>{{ (s.get('cnt_WOP',0) + s.get('cnt_HP',0))|days }}</td><td>{{ s.get('cnt_H',0)|days }}</td>
+        <td>{{ (s.get('cnt_L',0) + s.get('cnt_LWP',0))|days }}</td><td>{{ s.get('late_count',0)|days }}</td><td><b>{{ s.payable_days|days }}</b></td></tr>
+    </table>
+    <table class="calc grow">
+      {% for label, working, result in r.calc %}<tr><td>{{ label }}</td><td>{{ working }}</td><td>{{ result }}</td></tr>{% endfor %}
+    </table>
+  </div>
+  <div class="small muted" style="margin-top:26px;display:flex;justify-content:space-between"><span>Prepared by</span><span>Checked by</span><span>Employee signature</span></div>
+</div>
+{% else %}<p class="muted">No attendance in {{ month }}.</p>{% endfor %}
+{% endblock %}

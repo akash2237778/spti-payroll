@@ -1,0 +1,38 @@
+# TrueNAS SCALE  ->  Apps  ->  Discover Apps  ->  ⋮  ->  Install via YAML   (app name: spti-payroll)
+#
+# Placeholders filled in at deploy time:
+#   __DATA_PATH__   host dataset for the database, e.g. /mnt/<pool>/apps/spti-payroll
+#   __PORT__        a host port no other app uses (checked before deploying)
+#   __TS_AUTHKEY__  Tailscale auth key (only for the tailscale sidecar variant)
+#
+# The app gets its own Tailscale node "spti-payroll" and is served over HTTPS at
+# https://spti-payroll.<tailnet>.ts.net . The LAN port stays available as a fallback.
+services:
+  tailscale:
+    image: tailscale/tailscale:v1.90.6
+    hostname: spti-payroll
+    environment:
+      TS_AUTHKEY: __TS_AUTHKEY__
+      TS_HOSTNAME: spti-payroll
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - __DATA_PATH__/tailscale:/var/lib/tailscale
+      - __DATA_PATH__/tailscale-config:/config
+    ports:
+      - "__PORT__:8000"
+    restart: unless-stopped
+
+  payroll:
+    image: ghcr.io/akash2237778/spti-payroll:latest
+    network_mode: service:tailscale
+    environment:
+      TZ: Asia/Kolkata
+      PAYROLL_DB: /data/payroll.db
+      PORT: "8000"
+    volumes:
+      - __DATA_PATH__/data:/data
+    depends_on:
+      - tailscale
+    restart: unless-stopped

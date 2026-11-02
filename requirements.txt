@@ -1,0 +1,5 @@
+flask>=3.0
+pyzk>=0.9
+openpyxl>=3.1
+waitress>=3.0
+pytest>=8.0

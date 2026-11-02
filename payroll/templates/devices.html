@@ -1,0 +1,32 @@
+{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% block title %}Devices{% endblock %}
+{% block body %}
+<h1>Biometric devices</h1>
+<p class="muted">ZKTeco / eSSL devices on TCP port 4370. Syncing is safe to repeat: punches already stored are skipped. The auto-sync interval is in Settings.</p>
+{% for d in devices %}
+<div class="card">
+  <form method="post" class="row">{{ csrf_field() }}<input type="hidden" name="id" value="{{ d.id }}">
+    <div><label>Name</label><input name="name" value="{{ d.name }}"></div>
+    <div><label>IP address</label><input name="ip" value="{{ d.ip }}"></div>
+    <div><label>Port</label><input name="port" value="{{ d.port }}" size="6"></div>
+    <div><label>Comm key</label><input name="password" value="{{ d.password }}" size="6"></div>
+    <label class="chk"><input type="checkbox" name="active" {{ 'checked' if d.active }}> Active</label>
+    {% if user.role == 'admin' %}<button class="light">Save</button>{% endif %}
+  </form>
+  <div class="small muted" style="margin:8px 0">Serial {{ d.serial or '-' }} · last sync {{ d.last_sync or 'never' }} · {{ d.last_status or '' }}</div>
+  {% if user.role == 'admin' %}<div class="toolbar">
+    <form method="post" action="{{ url_for('device_action', did=d.id, action='test') }}">{{ csrf_field() }}<button class="light">Test connection</button></form>
+    <form method="post" action="{{ url_for('device_action', did=d.id, action='sync') }}">{{ csrf_field() }}<button>Download punches</button></form>
+    <form method="post" action="{{ url_for('device_action', did=d.id, action='settime') }}" onsubmit="return confirm('Set the device clock to this computer\'s time?')">{{ csrf_field() }}<button class="light">Set device clock to PC time</button></form>
+    <form method="post" action="{{ url_for('device_action', did=d.id, action='delete') }}" onsubmit="return confirm('Remove this device?')">{{ csrf_field() }}<button class="danger">Remove</button></form>
+  </div>{% endif %}
+</div>
+{% endfor %}
+{% if user.role == 'admin' %}
+<div class="card"><h2>Add device</h2>
+  <form method="post" class="row">{{ csrf_field() }}
+    <div><label>Name</label><input name="name" required></div><div><label>IP address</label><input name="ip" required></div>
+    <div><label>Port</label><input name="port" value="4370" size="6"></div><div><label>Comm key</label><input name="password" value="0" size="6"></div>
+    <button>Add</button></form></div>
+{% endif %}
+{% endblock %}
