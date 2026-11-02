@@ -106,7 +106,8 @@ DEFAULT_SETTINGS = {
     "fixed_month_days": "30",
     "weekly_off_paid_monthly": "1",     # monthly staff get paid weekly offs
     "weekly_off_paid_daily": "0",       # daily wagers get paid weekly offs
-    "sandwich_rule": "0",               # weekly off between two absences becomes absent
+    "sandwich_rule": "1",               # weekly off/holiday between two absences is not paid (company rule)
+    "sandwich_paid_leave": "0",         # 1 = paid leave on both sides also makes the weekly off unpaid
     "wo_work_mode": "ot",               # ot | extra_day : work on week-off/holiday paid as overtime hours (company rule)
     "missing_punch_policy": "half",     # absent | half | full : single-punch days until corrected
     "late_marks_per_halfday": "0",      # e.g. 3 => every 3 late marks deduct 0.5 day (0 = off)
@@ -166,6 +167,10 @@ def init_db():
             c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, break_start, grace_in_min,
                          grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
                          VALUES ('General', '09:00', '17:30', 30, 300, '13:00', 15, 15, 465, 240, 30, 30, 5)""")
+        if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_sandwich_on'").fetchone():
+            # Company rule (owner, 2026-11-02): Sunday is not paid when Saturday and Monday are taken off.
+            c.execute("UPDATE settings SET value='1' WHERE key='sandwich_rule'")
+            c.execute("INSERT INTO settings(key, value) VALUES ('migrated_sandwich_on', '1')")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_8h_day'").fetchone():
             # One-time move of an untouched old default General shift (09:00-20:30) to the 8-hour day.
             c.execute("""UPDATE shifts SET end_time='17:30', break_start='13:00', full_day_min=465

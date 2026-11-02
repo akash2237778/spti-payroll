@@ -582,7 +582,7 @@ def att_employee(eid):
     if not rows:
         start, end = engine.month_range(month)
         d = engine.employee_days(g.conn, [dict(emp)], start, end, g.settings)[eid]
-        summ = engine.summarize(d["days"], d["shift"], g.settings, emp["salary_type"])
+        summ = engine.summarize(d["days"], d["shift"], g.settings, emp["salary_type"], d.get("before", ()), d.get("after", ()))
         row = {"emp": dict(emp), "days": d["days"], "summary": summ, "shift": d["shift"],
                "pay": payroll.calculate(dict(emp), summ, month, g.settings)}
     else:
@@ -1191,7 +1191,7 @@ def settings_view():
             for k in db.DEFAULT_SETTINGS:
                 if k in f:
                     g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, f[k].strip()))
-            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule"):
+            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule", "sandwich_paid_leave"):
                 g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, "1" if f.get(k) else "0"))
             audit("settings_save", {k: f[k] for k in f if k != "csrf"})
             flash("Settings saved", "ok")

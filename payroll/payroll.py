@@ -99,7 +99,7 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None):
     rows = []
     for e in emps:
         d = data[e["id"]]
-        summary = engine.summarize(d["days"], d["shift"], settings, e["salary_type"])
+        summary = engine.summarize(d["days"], d["shift"], settings, e["salary_type"], d.get("before", ()), d.get("after", ()))
         if not e["active"] and summary["worked_min"] == 0 and not adjs.get(e["id"]):
             continue
         pay = calculate(e, summary, month, settings, adjs.get(e["id"], []))

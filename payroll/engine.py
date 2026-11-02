@@ -519,17 +519,21 @@ def make_shift_on(assignments, default_shift, shifts):
     return shift_on
 
 
+NEIGHBOUR_DAYS = 7   # days evaluated either side of the range so the sandwich rule can see across month ends
+
+
 def employee_days(conn, employees, start, end, settings, today=None, machine_only=False):
     """Compute day records for each employee between start and end (inclusive).
     machine_only: attendance exactly as the machine data gives it - ignores manual punches, punch decisions,
     forced statuses, leaves, late penalties and shift-roster changes (holidays still apply)."""
-    ctx = load_context(conn, start, end)
+    outer_start, outer_end = start - dt.timedelta(days=NEIGHBOUR_DAYS), end + dt.timedelta(days=NEIGHBOUR_DAYS)
+    ctx = load_context(conn, outer_start, outer_end)
     if machine_only:
         for k in ("leaves", "overrides", "assignments", "penalties"):
             ctx[k] = defaultdict(dict) if k != "assignments" else defaultdict(list)
     default_shift = next(iter(ctx["shifts"].values()))
     base_by_uid = {e["device_user_id"]: ctx["shifts"].get(e["shift_id"], default_shift) for e in employees}
-    streams = load_streams(conn, list(base_by_uid), start, end, int(settings.get("dedup_seconds") or 0), machine_only)
+    streams = load_streams(conn, list(base_by_uid), outer_start, outer_end, int(settings.get("dedup_seconds") or 0), machine_only)
     result = {}
     for e in employees:
         base_shift = base_by_uid[e["device_user_id"]]
@@ -542,8 +546,8 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
             by_day[work_date_of(s["start"], shift_on(s["start"].date()))].append(s)
         offs = {int(x) for x in (e["weekly_off"] or "").split(",") if x.strip() != ""}
         days, used = [], defaultdict(int)
-        d = start
-        while d <= end:
+        d = outer_start
+        while d <= outer_end:
             ds = d.isoformat()
             shift = shift_on(d)
             active = (not e["join_date"] or ds >= e["join_date"][:10]) and (not e["exit_date"] or ds <= e["exit_date"][:10])
@@ -557,7 +561,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
             rec["late_penalty_set"] = ds in ctx["penalties"][e["id"]]
             rec["late_penalty_suggest"] = suggest_penalty(rec["late_min"], settings) if rec["late_min"] else 0
             rec["shift_changed"] = shift is not base_shift
-            if rec["sessions"]:
+            if rec["sessions"] and start <= d <= end:
                 used[shift.get("id") or shift["name"]] += 1
             if not rec["override"] and "in progress" not in rec["flags"]:
                 for s in rec["sessions"]:
@@ -569,25 +573,39 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
                         break
             days.append(rec)
             d += dt.timedelta(days=1)
+        before = [r for r in days if r["date"] < start]
+        after = [r for r in days if r["date"] > end]
+        days = [r for r in days if start <= r["date"] <= end]
         main = max(used, key=used.get) if used else None
         main_shift = next((r["shift"] for r in days if (r["shift"].get("id") or r["shift"]["name"]) == main), base_shift)
         first_shift = days[0]["shift"] if days else base_shift
-        result[e["id"]] = {"shift": main_shift, "days": days,
+        result[e["id"]] = {"shift": main_shift, "days": days, "before": before, "after": after,
                            "typical": typ.get(first_shift.get("id") or first_shift["name"])}
     return result
 
 
-def summarize(days, shift, settings, salary_type="monthly"):
+def apply_sandwich(days, settings, before=(), after=()):
+    """Sandwich rule: a weekly off / holiday whose nearest working days on BOTH sides are absences
+    (absent or leave without pay) is not paid - e.g. Saturday absent + Monday absent => Sunday absent.
+    `before` / `after` are the days just outside the range so a Sunday on the 1st or 31st is judged correctly."""
+    if settings.get("sandwich_rule") != "1":
+        return
+    off_days = {"A", "LWP"} | ({"L"} if settings.get("sandwich_paid_leave") == "1" else set())
+    seq = list(before) + list(days) + list(after)
+    first = len(before)
+    for i in range(first, first + len(days)):
+        r = seq[i]
+        if r["status"] in ("WO", "H") and not r["override"]:
+            prev = next((x for x in reversed(seq[:i]) if x["status"] not in ("WO", "H")), None)
+            nxt = next((x for x in seq[i + 1:] if x["status"] not in ("WO", "H")), None)
+            if prev and nxt and prev["status"] in off_days and nxt["status"] in off_days:
+                r["status"], r["off_credit"] = "A", 0.0
+                r["flags"].append(f"sandwich rule ({prev['date']:%a} & {nxt['date']:%a} off)")
+
+
+def summarize(days, shift, settings, salary_type="monthly", before=(), after=()):
     """Monthly totals + payable days for one employee."""
-    # Sandwich rule: a weekly off/holiday flanked by absences on both sides is treated as absent.
-    if settings.get("sandwich_rule") == "1":
-        for i, r in enumerate(days):
-            if r["status"] in ("WO", "H") and not r["override"]:
-                prev = next((x for x in reversed(days[:i]) if x["status"] not in ("WO", "H")), None)
-                nxt = next((x for x in days[i + 1:] if x["status"] not in ("WO", "H")), None)
-                if prev and nxt and prev["status"] in ("A", "LWP") and nxt["status"] in ("A", "LWP"):
-                    r["status"], r["off_credit"] = "A", 0.0
-                    r["flags"].append("sandwich rule")
+    apply_sandwich(days, settings, before, after)
 
     s = defaultdict(float)
     for r in days:

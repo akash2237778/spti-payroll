@@ -29,7 +29,8 @@
     <option value="ot" {{ 'selected' if s.long_duty_mode=='ot' }}>1 day + overtime for extra hours</option>
     <option value="double" {{ 'selected' if s.long_duty_mode=='double' }}>2 days (+ OT beyond two shifts)</option></select></div>
   <div><label>&nbsp;</label>
-    <label class="chk"><input type="checkbox" name="sandwich_rule" {{ 'checked' if s.sandwich_rule=='1' }}> Sandwich rule (off day between two absences = absent)</label></div>
+    <label class="chk"><input type="checkbox" name="sandwich_rule" {{ 'checked' if s.sandwich_rule=='1' }}> Sandwich rule: Sunday / holiday not paid when the working days on both sides are off (e.g. Saturday and Monday absent)</label>
+    <label class="chk"><input type="checkbox" name="sandwich_paid_leave" {{ 'checked' if s.sandwich_paid_leave=='1' }}> …also when those days are paid leave</label></div>
 </div></div>
 <div class="card"><h2>Late-comer penalty — suggested minutes</h2>
   <p class="small muted" style="margin-top:0">The penalty is <b>chosen day by day on each employee's sheet</b> (Attendance → employee → "Late penalty" column).

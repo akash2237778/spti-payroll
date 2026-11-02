@@ -378,3 +378,68 @@ def test_paid_lunch_break():
     emp = {"salary_type": "hourly", "salary_rate": 100, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 0}
     sm = {"payable_days": 1, "std_min": 480, "worked_min": 510, "ot_min": 0, "paid_off_days": 0}
     assert payroll.calculate(emp, sm, "2026-09", S)["basic"] == 850   # 8.5 paid hours x 100
+
+
+# ---------------------------------------------------------------- sandwich rule (company rule: on by default)
+
+def _day(d, kind):
+    if kind == "P":
+        return engine.evaluate_day(d, [t(9, day=d), t(20, 30, day=d)], SHIFT, S, today=TODAY)
+    if kind == "A":
+        return engine.evaluate_day(d, [], SHIFT, S, today=TODAY)
+    if kind == "WO":
+        return engine.evaluate_day(d, [], SHIFT, S, weekly_off=True, today=TODAY)
+    if kind == "H":
+        return engine.evaluate_day(d, [], SHIFT, S, holiday={"name": "Holiday", "paid": 1}, today=TODAY)
+    if kind == "L":
+        return engine.evaluate_day(d, [], SHIFT, S, leave={"leave_type": "CL", "paid": 1, "half_day": 0}, today=TODAY)
+
+
+def _week(kinds, first=dt.date(2026, 10, 3)):   # 3 Oct 2026 is a Saturday
+    return [_day(first + dt.timedelta(days=i), k) for i, k in enumerate(kinds)]
+
+
+def test_sandwich_is_on_by_default():
+    assert S["sandwich_rule"] == "1"
+    days = _week(["A", "WO", "A"])            # Sat absent, Sun off, Mon absent
+    s = engine.summarize(days, SHIFT, S)
+    assert days[1]["status"] == "A" and days[1]["off_credit"] == 0 and "sandwich rule (Sat & Mon off)" in days[1]["flags"]
+    assert s["payable_days"] == 0
+
+
+def test_sandwich_needs_both_sides_off():
+    for kinds in (["P", "WO", "A"], ["A", "WO", "P"], ["P", "WO", "P"]):
+        days = _week(kinds)
+        engine.summarize(days, SHIFT, S)
+        assert days[1]["status"] == "WO", kinds
+
+
+def test_sandwich_across_month_boundary():
+    # Sun 1 Mar 2026: Sat 28 Feb is in the previous month, Mon 2 Mar absent
+    sat, sun, mon = dt.date(2026, 2, 28), dt.date(2026, 3, 1), dt.date(2026, 3, 2)
+    assert sun.weekday() == 6
+    before = [_day(sat, "A")]
+    nov = [_day(sun, "WO"), _day(mon, "A")]
+    engine.summarize(nov, SHIFT, S, before=before)
+    assert nov[0]["status"] == "A"
+    nov2 = [_day(sun, "WO"), _day(mon, "A")]
+    engine.summarize(nov2, SHIFT, S, before=[_day(sat, "P")])     # worked Saturday -> Sunday paid
+    assert nov2[0]["status"] == "WO"
+
+
+def test_sandwich_paid_leave_option_and_holiday_chain():
+    days = _week(["L", "WO", "L"])
+    engine.summarize(days, SHIFT, S)
+    assert days[1]["status"] == "WO"                                     # paid leave: Sunday stays paid
+    days = _week(["L", "WO", "L"])
+    engine.summarize(days, SHIFT, dict(S, sandwich_paid_leave="1"))
+    assert days[1]["status"] == "A"
+    days = _week(["A", "WO", "H", "A"])                                  # Sat absent, Sun, Mon holiday, Tue absent
+    engine.summarize(days, SHIFT, S)
+    assert days[1]["status"] == "A" and days[2]["status"] == "A"
+
+
+def test_sandwich_can_be_turned_off():
+    days = _week(["A", "WO", "A"])
+    engine.summarize(days, SHIFT, dict(S, sandwich_rule="0"))
+    assert days[1]["status"] == "WO"
