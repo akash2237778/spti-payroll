@@ -232,7 +232,8 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
     rec = {"date": work_date, "status": "-", "in": None, "out": None, "punches": [],
            "sessions": sessions, "worked_min": 0, "late_min": 0, "early_min": 0, "ot_min": 0,
            "work_credit": 0.0, "extra_credit": 0.0, "off_credit": 0.0, "off_kind": None, "flags": [], "override": False,
-           "leave_type": None, "holiday": holiday["name"] if holiday else None, "suggest": None}
+           "leave_type": None, "holiday": holiday["name"] if holiday else None, "suggest": None,
+           "early_short_min": 0}
     if not active:
         return rec
     forced_status = None
@@ -369,6 +370,17 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
             set_ot(ot_base)
         rec["late_min"] = rec["early_min"] = 0
         return rec
+
+    # Early leave (company rule): leaving after the cut-off (e.g. 14:00) but before the shift end still earns a
+    # full day; the minutes short of the standard day are taken off the month's overtime (see summarize).
+    cut = settings.get("early_leave_full_day_after") or ""
+    if cut and complete and not double:
+        cut_dt = dt.datetime.combine(work_date, parse_hm(cut))
+        last_out = complete[-1]["end"]
+        if s_start < cut_dt < s_end and cut_dt < last_out < s_end and int(shift["half_day_min"]) <= mins < std:
+            work_credit = 1.0
+            rec["early_short_min"] = std - mins
+            rec["flags"].append(f"left early: full day, {fmt_min(std - mins)} from OT")
 
     rec["work_credit"] = work_credit
     rec["extra_credit"] = bonus_credit
@@ -636,8 +648,12 @@ def summarize(days, shift, settings, salary_type="monthly", before=(), after=())
     # Penalty minutes are chosen day by day on the employee's sheet (late_penalties table).
     s["late_penalty_min"] = float(sum(r.get("late_penalty_min", 0) for r in days))
     s["late_penalty_days"] = float(sum(1 for r in days if r.get("late_penalty_min")))
-    s["ot_min"] = max(0.0, s["ot_min_gross"] - s["late_penalty_min"])
-    s["late_penalty_unrecovered_min"] = max(0.0, s["late_penalty_min"] - s["ot_min_gross"])
+    # Early-leave shortfall also comes out of overtime (not for hourly staff: they are only paid hours worked).
+    s["early_short_min"] = 0.0 if salary_type == "hourly" else float(sum(r.get("early_short_min", 0) for r in days))
+    s["early_short_days"] = 0.0 if salary_type == "hourly" else float(sum(1 for r in days if r.get("early_short_min")))
+    taken = s["late_penalty_min"] + s["early_short_min"]
+    s["ot_min"] = max(0.0, s["ot_min_gross"] - taken)
+    s["late_penalty_unrecovered_min"] = max(0.0, taken - s["ot_min_gross"])
 
     wo_paid = settings.get("weekly_off_paid_daily" if salary_type == "daily" else "weekly_off_paid_monthly", "1") == "1"
     s["wo_paid"] = 1.0 if wo_paid else 0.0

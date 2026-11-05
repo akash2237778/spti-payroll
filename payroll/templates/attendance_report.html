@@ -26,7 +26,7 @@
     {% if can_pay %}<td>Salary: {{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td>{% endif %}</tr></table>
   <table>
     <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early</th>
-      <th class="n">OT</th><th class="n">Late pen.</th><th class="n">Day credit</th><th>Notes</th></tr>
+      <th class="n">OT</th><th class="n">Late pen.</th><th class="n" title="Left early but given a full day: minutes taken off OT">Short</th><th class="n">Day credit</th><th>Notes</th></tr>
     {% for d in r.days %}
     <tr class="{{ 'off' if d.status in ('WO','H','-') }}">
       <td>{{ d.date.strftime('%d') }}</td><td>{{ d.date.strftime('%a') }}</td><td>{{ d.shift.name if d.shift else '' }}</td><td><b>{{ d.status }}</b></td>
@@ -36,12 +36,14 @@
       <td class="n">{{ d.late_min ~ 'm' if d.late_min else '' }}</td><td class="n">{{ d.early_min ~ 'm' if d.early_min else '' }}</td>
       <td class="n">{{ fmt_min(d.ot_min) if d.ot_min else '' }}</td>
       <td class="n">{{ d.late_penalty_min ~ 'm' if d.late_penalty_min else '' }}</td>
+      <td class="n">{{ fmt_min(d.early_short_min) if d.early_short_min and r.pay.salary_type != 'hourly' else '' }}</td>
       <td class="n">{{ r.credit[loop.index0]|days if r.credit[loop.index0] else '' }}</td>
       <td class="small">{{ d.holiday or '' }} {{ d.leave_type or '' }} {{ d.flags|join(', ') }}{{ ' (corrected)' if d.override }}</td>
     </tr>{% endfor %}
     <tr><th colspan="6">Totals</th><th class="n">{{ fmt_min(s.worked_min) }}</th><th class="n">{{ s.get('late_count',0)|days }}×</th>
       <th class="n">{{ s.get('early_count',0)|days }}×</th><th class="n">{{ fmt_min(s.get('ot_min_gross', s.ot_min)) }}</th>
-      <th class="n">{{ fmt_min(s.get('late_penalty_min',0)) }}</th><th class="n">{{ (r.credit|sum)|days }}</th><th></th></tr>
+      <th class="n">{{ fmt_min(s.get('late_penalty_min',0)) }}</th><th class="n">{{ fmt_min(s.get('early_short_min',0)) }}</th>
+      <th class="n">{{ (r.credit|sum)|days }}</th><th></th></tr>
   </table>
   <div class="row" style="align-items:flex-start;margin-top:8px">
     <table style="width:auto">

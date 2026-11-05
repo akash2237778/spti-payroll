@@ -38,7 +38,7 @@
 </div>
 {% endif %}
 <div class="scroll" style="margin-top:8px"><table>
-  <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th>All punches</th><th>Notes</th><th></th></tr>
+  <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th class="n" title="Left early but given a full day: minutes taken off overtime">Short (OT −)</th><th class="n" title="Payable days this day contributes: worked + extra + paid weekly off / holiday / leave">Day credit</th><th>All punches</th><th>Notes</th><th></th></tr>
   {% for d in row.days %}
   <tr id="d{{ d.date.day }}">
     <td>{{ d.date.strftime('%d %b') }}</td><td>{{ d.date.strftime('%a') }}</td>
@@ -63,6 +63,9 @@
           <input type="number" name="minutes" min="0" value="{{ d.late_penalty_suggest }}" style="width:58px" title="OT minutes to take off">
           <button class="light small" title="Take these minutes off this month's overtime">Penalize</button></form>
       {% endif %}</td>
+    {% set dc = day_credit(d, s.get('wo_paid', 1)) %}
+    <td class="n">{{ fmt_min(d.early_short_min) if d.early_short_min and row.pay.salary_type != 'hourly' else '' }}</td>
+    <td class="n">{% if dc %}<b>{{ dc|days }}</b>{% endif %}</td>
     <td class="small muted">{% for t in d.punches %}{{ t.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}</td>
     <td class="small">{{ d.holiday or '' }} {{ d.leave_type or '' }} {% for f in d.flags %}<span class="badge warn">{{ f }}</span> {% endfor %}</td>
     <td style="white-space:nowrap" class="noprint">
@@ -83,7 +86,7 @@
   {% set qin = d['in'] or (d.suggest.ts if d.suggest and d.suggest.role == 'in' else sh_start) %}
   {% set qout = d.out or (d.suggest.ts if d.suggest and d.suggest.role == 'out' else sh_end) %}
   {% set cur_ov = d.status if d.override else '' %}
-  <tr id="qf{{ d.date.day }}" hidden class="noprint"><td colspan="14" style="background:#fffbea">
+  <tr id="qf{{ d.date.day }}" hidden class="noprint"><td colspan="16" style="background:#fffbea">
     <form method="post" action="{{ url_for('att_day', eid=emp.id, date=d.date.isoformat()) }}" class="row" style="align-items:flex-end">{{ csrf_field() }}
       <input type="hidden" name="action" value="quick"><input type="hidden" name="back" value="{{ request.full_path }}#d{{ d.date.day }}">
       <input type="hidden" name="orig_in" value="{{ qin.strftime('%Y-%m-%dT%H:%M') }}"><input type="hidden" name="orig_out" value="{{ qout.strftime('%Y-%m-%dT%H:%M') }}">
@@ -100,6 +103,11 @@
   </td></tr>
   {% endif %}
   {% endfor %}
+  <tr><th colspan="6">Totals</th><th class="n">{{ fmt_min(s.worked_min) }}</th><th class="n">{{ s.get('late_count',0)|days }}×</th>
+    <th class="n">{{ s.get('early_count',0)|days }}×</th><th class="n">{{ fmt_min(s.get('ot_min_gross', s.ot_min)) }}</th>
+    <th class="n">{{ fmt_min(s.get('late_penalty_min',0)) }}</th><th class="n">{{ fmt_min(s.get('early_short_min',0)) }}</th>
+    <th class="n">{{ s.payable_days|days }}{% if s.get('late_deduction_days') %} <span class="small muted">(after −{{ s.late_deduction_days|days }} late)</span>{% endif %}</th>
+    <th colspan="3" class="small muted">OT paid {{ fmt_min(s.ot_min) }}</th></tr>
 </table></div>
 {% if can_pay %}
 <div class="card" style="margin-top:14px"><h2>Salary preview ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>

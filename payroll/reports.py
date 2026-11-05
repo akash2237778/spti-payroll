@@ -64,11 +64,15 @@ def calc_lines(row, settings, cur="₹"):
         lines.append(("Basic earned", f"{money(p['rate'], cur)}/h × ({num(round(normal, 2))} normal hours + "
                       f"{num(s['paid_off_days'])} paid off-days × {num(std_h)} h)", money(p["basic"], cur)))
     gross_ot = s.get("ot_min_gross", s["ot_min"]) / 60
-    if s.get("late_penalty_min"):
-        lines.append(("Overtime hours", f"{engine.fmt_min(s.get('ot_min_gross', 0))} earned − {engine.fmt_min(s['late_penalty_min'])} "
-                      f"late penalty ({num(s.get('late_penalty_days', 0))} day(s) penalized)", engine.fmt_min(s["ot_min"])))
+    if s.get("late_penalty_min") or s.get("early_short_min"):
+        parts = [f"{engine.fmt_min(s.get('ot_min_gross', 0))} earned"]
+        if s.get("late_penalty_min"):
+            parts.append(f"{engine.fmt_min(s['late_penalty_min'])} late penalty ({num(s.get('late_penalty_days', 0))} day(s))")
+        if s.get("early_short_min"):
+            parts.append(f"{engine.fmt_min(s['early_short_min'])} short on early-leave full days ({num(s.get('early_short_days', 0))} day(s))")
+        lines.append(("Overtime hours", " − ".join(parts), engine.fmt_min(s["ot_min"])))
         if s.get("late_penalty_unrecovered_min"):
-            lines.append(("", f"penalty larger than OT; {engine.fmt_min(s['late_penalty_unrecovered_min'])} not recovered (OT cannot go below 0)", ""))
+            lines.append(("", f"deductions larger than OT; {engine.fmt_min(s['late_penalty_unrecovered_min'])} not recovered (OT cannot go below 0)", ""))
     else:
         lines.append(("Overtime hours", f"{num(round(gross_ot, 2))} h beyond standard shift", engine.fmt_min(s["ot_min"])))
     lines.append(("Overtime pay", f"{num(p['ot_hours'])} h × {money(p['hour_rate'], cur)} × {num(row['emp'].get('ot_multiplier') or 1)}"
@@ -227,7 +231,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
 
     head = ["Date", "Day", "Shift", "Status", "In", "Out", "Worked min", "Late min", "Early min", "OT min", "Late penalty min",
             "Work credit", "Extra credit", "Weekly-off credit", "Holiday credit", "Leave credit", "Notes",
-            "OT starts after (min)", "Break min", "Break after min", "OT after min", "OT block min", "Lunch from", "Lunch to"]
+            "OT starts after (min)", "Break min", "Break after min", "OT after min", "OT block min", "Lunch from", "Lunch to",
+            "Early-leave short min"]
     H = 14
     _hdr(ws, H, head)
     ws.row_dimensions[H].height = 30
@@ -280,7 +285,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ws.cell(row=r, column=16, value=d["off_credit"] if d["off_kind"] == "leave" else 0)
         notes = " ".join(filter(None, [d.get("holiday") or "", d.get("leave_type") or ""] + d["flags"]))
         ws.cell(row=r, column=17, value=notes)
-        for c in range(1, 25):
+        ws.cell(row=r, column=25, value=0 if p["salary_type"] == "hourly" else d.get("early_short_min", 0))
+        for c in range(1, 26):
             ws.cell(row=r, column=c).border = BOX
     last = first + len(days) - 1
     rng = lambda col: f"{col}{first}:{col}{last}"  # noqa: E731
@@ -311,7 +317,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ("Worked hours", f"=SUM({rng('G')})/60", "worked_h"),
         ("OT earned (min)", f"=SUM({rng('J')})", "ot_gross"),
         ("Late penalty (min)", f"=SUM({rng('K')})", "lp"),
-        ("OT hours (net, never below 0)", "=MAX(0,{ot_gross}-{lp})/60", "ot_h"),
+        ("Early-leave short (min)", f"=SUM({rng('Y')})", "short"),
+        ("OT hours (net, never below 0)", "=MAX(0,{ot_gross}-{lp}-{short})/60", "ot_h"),
         ("Salary type", f"={T}", "type"),
         ("Rate", f"={BA}", "rate"),
         ("Per-day rate", f'=IF({T}="monthly",{BA}/{BR},IF({T}="daily",{BA},{BA}*{STD}))', "per_day"),
@@ -348,7 +355,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
         if key in ("per_day", "hour_rate", "basic", "ot_pay", "allow", "bonus", "gross", "pf", "esi", "adv", "tds", "oth", "ded", "net"):
             c.number_format = "#,##0.00"
     widths = {"A": 36, "B": 14, "C": 9, "D": 7, "E": 14, "F": 14, "Q": 30}
-    for i in range(1, 25):
+    for i in range(1, 26):
         L = get_column_letter(i)
         ws.column_dimensions[L].width = widths.get(L, 9)
     ws.freeze_panes = f"E{first}"

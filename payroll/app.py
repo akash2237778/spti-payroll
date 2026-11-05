@@ -26,7 +26,7 @@ def _secret_key():
 
 
 app.config["SECRET_KEY"] = os.environ.get("PAYROLL_SECRET") or _secret_key()
-app.jinja_env.globals.update(fmt_min=engine.fmt_min, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
+app.jinja_env.globals.update(fmt_min=engine.fmt_min, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
                              OVERRIDE_STATUSES=engine.OVERRIDE_STATUSES, WEEKDAYS=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
 
 

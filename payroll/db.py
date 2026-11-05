@@ -122,6 +122,9 @@ DEFAULT_SETTINGS = {
     # Late penalty is chosen day by day on each employee's sheet; these only pre-fill the suggested minutes.
     "late_penalty_per_mark_min": "0",   # fixed OT minutes suggested per late day
     "late_penalty_factor": "1",         # plus this multiple of the minutes late
+    # Company rule: leaving after this time (and before shift end) still earns a full day; the missing
+    # hours are taken off the month's overtime. Blank = off.
+    "early_leave_full_day_after": "14:00",
 }
 
 

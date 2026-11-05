@@ -443,3 +443,42 @@ def test_sandwich_can_be_turned_off():
     days = _week(["A", "WO", "A"])
     engine.summarize(days, SHIFT, dict(S, sandwich_rule="0"))
     assert days[1]["status"] == "WO"
+
+
+# ---------------------------------------------------------------- early leave after 14:00 = full day, shortfall from OT
+
+def test_early_leave_after_2pm_full_day_shortfall_from_ot():
+    assert S["early_leave_full_day_after"] == "14:00"
+    r = ev8((9, 0), (15, 0))                       # 6h span - 30 lunch = 5:30 worked, 2:30 short
+    assert r["status"] == "P" and r["work_credit"] == 1 and r["early_short_min"] == 150
+    assert any(f.startswith("left early: full day") for f in r["flags"])
+    assert ev8((9, 0), (17, 0))["early_short_min"] == 30
+    assert ev8((9, 0), (17, 30))["early_short_min"] == 0       # full shift: nothing short
+    r = ev8((9, 0), (14, 0))                       # exactly 14:00 is not "after 2 PM": normal rules
+    assert r["status"] == "HD" and r["early_short_min"] == 0
+    r = ev8((9, 0), (13, 45))                      # before 14:00: normal rules (4:15 -> half day)
+    assert r["status"] == "HD" and r["early_short_min"] == 0
+    r = ev8((13, 30), (14, 30))                    # only 1h worked: not a full day
+    assert r["status"] == "A" and r["early_short_min"] == 0
+    r = engine.evaluate_day(D, [t(9, day=D), t(15, day=D)], SHIFT8, dict(S, early_leave_full_day_after=""), today=TODAY)
+    assert r["status"] == "HD"                     # rule off -> old behaviour
+
+
+def test_early_leave_shortfall_reduces_month_ot_not_salary():
+    d1, d2 = dt.date(2026, 9, 1), dt.date(2026, 9, 2)
+    days = [engine.evaluate_day(d1, [t(9, day=d1), t(15, day=d1)], SHIFT8, S, today=TODAY),     # 150 short
+            engine.evaluate_day(d2, [t(9, day=d2), t(20, 30, day=d2)], SHIFT8, S, today=TODAY)]  # 180 OT
+    s = engine.summarize(days, SHIFT8, S, "monthly")
+    assert s["payable_days"] == 2 and s["ot_min_gross"] == 180 and s["early_short_min"] == 150 and s["ot_min"] == 30
+    days = [engine.evaluate_day(d1, [t(9, day=d1), t(15, day=d1)], SHIFT8, S, today=TODAY)]
+    s = engine.summarize(days, SHIFT8, S, "monthly")
+    assert s["ot_min"] == 0 and s["late_penalty_unrecovered_min"] == 150 and s["payable_days"] == 1
+    s = engine.summarize([engine.evaluate_day(d1, [t(9, day=d1), t(15, day=d1)], SHIFT8, S, today=TODAY)], SHIFT8, S, "hourly")
+    assert s["early_short_min"] == 0               # hourly staff are only paid hours worked anyway
+
+
+def test_early_leave_not_for_night_shift():
+    night = dict(SHIFT, start_time="21:00", end_time="09:00", day_start_hour=12)
+    a, b = dt.datetime(2026, 9, 15, 21, 0), dt.datetime(2026, 9, 16, 6, 0)
+    r = engine.evaluate_day(D, [a, b], night, S, today=TODAY)
+    assert r["early_short_min"] == 0
