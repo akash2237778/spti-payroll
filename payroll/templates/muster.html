@@ -1,7 +1,7 @@
-{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, sort_toggle with context %}
 {% block title %}Muster roll {{ month }}{% endblock %}
 {% block body %}
-<h1>Monthly muster roll {{ monthnav('att_monthly', month, prev, nxt) }}
+<h1>Monthly muster roll {{ monthnav('att_monthly', month, prev, nxt) }} {{ sort_toggle() }}
   <a class="btn light small noprint" href="{{ url_for('export_muster', month=month) }}">Export Excel</a>
   <a class="btn light small noprint" href="{{ url_for('export_punches', month=month) }}">Raw punches CSV</a>
   <button class="light small noprint" onclick="window.print()">Print</button>

@@ -1,7 +1,7 @@
-{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import csrf_field, sort_toggle with context %}
 {% block title %}Bulk salary edit{% endblock %}
 {% block body %}
-<h1>Bulk edit salaries (active employees)</h1>
+<h1>Bulk edit salaries (active employees) {{ sort_toggle() }}</h1>
 <p class="muted">Set salary type and rate for everyone in one go. Monthly = fixed monthly salary, Daily = wage per day, Hourly = wage per hour.</p>
 <form method="post">{{ csrf_field() }}
 <div class="scroll"><table>

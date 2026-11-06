@@ -1,10 +1,11 @@
-{% extends "base.html" %}{% from "_macros.html" import st, csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, csrf_field, sort_toggle with context %}
 {% block title %}Today{% endblock %}
 {% block body %}
 <h1>Attendance for {{ day.strftime('%a, %d %b %Y') }}
   <span class="nav-month"><a class="btn light small" href="{{ url_for('dashboard', date=prev) }}">&larr;</a>
   <form class="inline"><input type="date" name="date" value="{{ day.isoformat() }}" onchange="this.form.submit()"></form>
   <a class="btn light small" href="{{ url_for('dashboard', date=nxt) }}">&rarr;</a></span>
+  {{ sort_toggle() }}
   {% if holiday %}<span class="badge {{ 'ok' if holiday.paid else '' }}">{{ 'Paid' if holiday.paid else 'Unpaid' }} holiday: {{ holiday.name }}</span>
   {% elif can_edit %}
   <form method="post" action="{{ url_for('holidays', year=day.year) }}" class="inline noprint" onsubmit="var n = prompt('Holiday name', 'National holiday'); this.elements['name'].value = n || ''; return !!n">

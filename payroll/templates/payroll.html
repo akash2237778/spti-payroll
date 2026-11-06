@@ -1,7 +1,7 @@
-{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field, sort_toggle with context %}
 {% block title %}Payroll {{ month }}{% endblock %}
 {% block body %}
-<h1>Payroll register {{ monthnav('payroll_view', month, prev, nxt) }}
+<h1>Payroll register {{ monthnav('payroll_view', month, prev, nxt) }} {{ sort_toggle() }}
   {% if run and run.status == 'final' %}<span class="badge bad">FINALIZED {{ run.finalized_at }} by {{ run.finalized_by }}</span>
   {% elif run %}<span class="badge warn">draft saved {{ run.created_at }}</span>{% else %}<span class="badge">live preview</span>{% endif %}
 </h1>

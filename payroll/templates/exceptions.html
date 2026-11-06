@@ -1,7 +1,7 @@
-{% extends "base.html" %}{% from "_macros.html" import st, monthnav, csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, csrf_field, sort_toggle with context %}
 {% block title %}Exceptions {{ month }}{% endblock %}
 {% block body %}
-<h1>Attendance exceptions {{ monthnav('exceptions', month, prev, nxt, kind=kind) }}</h1>
+<h1>Attendance exceptions {{ sort_toggle() }} {{ monthnav('exceptions', month, prev, nxt, kind=kind) }}</h1>
 <p class="muted">Punches are paired across days automatically (a shift may run past midnight, up to {{ settings.max_duty_hours }} h).
 Only what the system can't be sure about is listed here. Each fix re-pairs all later days.</p>
 <div class="toolbar">

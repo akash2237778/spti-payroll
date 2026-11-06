@@ -405,3 +405,16 @@ def test_end_to_end(client):
     post(c, "/settings", action="set_role", uid=str(me), role="hr")
     with db.tx() as conn:
         assert conn.execute("SELECT role FROM app_users WHERE id=?", (me,)).fetchone()["role"] == "admin"
+
+    # 11. sort employees by name or ID (remembered for the session)
+    import re as _re
+    def first_names(html, n=6):
+        return _re.findall(r'<a class="view" href="/employees/\d+">([^<]+)</a>', html)[:n]
+    by_name = first_names(c.get("/employees?sort=name").data.decode(), 40)
+    assert by_name == sorted(by_name, key=str.lower) and len(by_name) > 5
+    assert first_names(c.get("/employees").data.decode(), 40) == by_name          # remembered
+    muster = c.get("/attendance/monthly?month=2026-10").data.decode()
+    names = _re.findall(r'class="name"><a href="[^"]+">\d+ · ([^<]+)</a>', muster)
+    assert names == sorted(names, key=str.lower), names[:5]
+    ids = [int(x) for x in _re.findall(r'class="name"><a href="[^"]+">(\d+) · ', c.get("/attendance/monthly?month=2026-10&sort=id").data.decode())]
+    assert ids == sorted(ids)

@@ -88,7 +88,42 @@ def teardown(exc):
 def inject():
     return {"user": g.get("user"), "settings": g.get("settings", {}), "csrf": session.get("csrf"),
             "cur": g.get("settings", {}).get("currency", "₹"),
-            "can_pay": can_pay(), "can_edit": can_edit(), "is_admin": is_admin(), "ROLES": ROLES}
+            "can_pay": can_pay(), "can_edit": can_edit(), "is_admin": is_admin(), "ROLES": ROLES,
+            "emp_sort": emp_sort() if g.get("user") else "id", "url_with": url_with}
+
+
+# ------------------------------------------------------------------ employee sort order (ID or name)
+
+def emp_sort():
+    """Current sort for employee lists. ?sort=id|name on any page changes it and is remembered for the session."""
+    want = request.args.get("sort")
+    if want in ("id", "name"):
+        session["emp_sort"] = want
+    return session.get("emp_sort", "id")
+
+
+def emp_order_sql(alias=""):
+    a = f"{alias}." if alias else ""
+    by_id = f"CAST({a}device_user_id AS INTEGER)"
+    return f"LOWER({a}name), {by_id}" if emp_sort() == "name" else by_id
+
+
+def sort_rows(rows):
+    """Sort computed rows ({'emp': ...}) the same way as the SQL lists."""
+    def key(r):
+        e = r["emp"]
+        try:
+            num = int(e["device_user_id"])
+        except (TypeError, ValueError):
+            num = 10 ** 9
+        return ((e["name"] or "").lower(), num) if emp_sort() == "name" else (num, (e["name"] or "").lower())
+    return sorted(rows, key=key)
+
+
+def url_with(**kw):
+    """The current page's URL with some query arguments replaced (used by the sort switch)."""
+    args = {**(request.view_args or {}), **request.args.to_dict(), **kw}
+    return url_for(request.endpoint, **args)
 
 
 # ------------------------------------------------------------------ roles
@@ -225,7 +260,7 @@ def dashboard():
     today = dt.date.today()
     day = request.args.get("date")
     day = dt.date.fromisoformat(day) if day else today
-    emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)")]
+    emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql())]
     data = engine.employee_days(g.conn, emps, day, day, g.settings)
     rows = []
     stats = {"total": len(emps), "present": 0, "absent": 0, "late": 0, "missing": 0, "off": 0}
@@ -318,7 +353,7 @@ def employees():
         q += " WHERE e.active = 1"
     elif show == "inactive":
         q += " WHERE e.active = 0"
-    rows = g.conn.execute(q + " ORDER BY CAST(e.device_user_id AS INTEGER)").fetchall()
+    rows = g.conn.execute(q + " ORDER BY " + emp_order_sql("e")).fetchall()
     last = {r["device_user_id"]: r["m"] for r in g.conn.execute("SELECT device_user_id, MAX(ts) m FROM punches GROUP BY device_user_id")}
     return render_template("employees.html", rows=rows, show=show, last=last, shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
 
@@ -458,7 +493,7 @@ def employees_bulk():
         audit("employee_bulk_save", f"{n} employees")
         flash(f"Updated {n} employees", "ok")
         return redirect(url_for("employees_bulk"))
-    rows = g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    rows = g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql()).fetchall()
     return render_template("employees_bulk.html", rows=rows, shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
 
 
@@ -493,7 +528,7 @@ def employees_import():
 
 @app.route("/employees/export.csv")
 def employees_export():
-    rows = g.conn.execute("SELECT * FROM employees ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    rows = g.conn.execute("SELECT * FROM employees ORDER BY " + emp_order_sql()).fetchall()
     cols = [c for c in EMP_FIELDS + EMP_FLAGS + ["weekly_off"] if can_pay() or c not in PAY_FIELDS]
     return csv_response("employees.csv", cols, [[r[c] for c in cols] for r in rows])
 
@@ -565,7 +600,7 @@ def att_daily():
 @app.route("/attendance/monthly")
 def att_monthly():
     month = cur_month()
-    rows = payroll.compute_month(g.conn, month)
+    rows = sort_rows(payroll.compute_month(g.conn, month))
     start, end = engine.month_range(month)
     dates = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
     prev, nxt = month_nav(month)
@@ -589,7 +624,7 @@ def att_employee(eid):
         row = rows[0]
     prev, nxt = month_nav(month)
     locked = payroll.run_status(g.conn, month) == "final"
-    others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY CAST(device_user_id AS INTEGER)").fetchall()
+    others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY " + emp_order_sql()).fetchall()
     m_start, m_end = engine.month_range(month)
     return render_template("employee_month.html", row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
@@ -853,7 +888,7 @@ def exceptions():
             set_punch_role(emp, int(f["end_id"]), "in")  # that 'out' was really the next arrival
             flash("Split: the later punch is now an arrival; the earlier one shows as a missing punch with a suggestion", "ok")
         return redirect(url_for("exceptions", month=month, kind=request.args.get("kind", "")))
-    rows = payroll.compute_month(g.conn, month)
+    rows = sort_rows(payroll.compute_month(g.conn, month))
     items = _exception_items(rows)
     kind = request.args.get("kind", "")
     counts = {k: sum(1 for i in items if i["kind"] == k) for k in ("mp", "long", "short")}
@@ -990,8 +1025,8 @@ def payroll_rows(month):
     """Finalized months come from the saved snapshot; others are computed live."""
     run, saved = payroll.load_saved(g.conn, month)
     if run and run["status"] == "final":
-        return run, [{"emp": dict(it["emp"], id=it["employee_id"]), "summary": it["summary"], "pay": it["pay"]} for it in saved]
-    return run, payroll.compute_month(g.conn, month)
+        return run, sort_rows([{"emp": dict(it["emp"], id=it["employee_id"]), "summary": it["summary"], "pay": it["pay"]} for it in saved])
+    return run, sort_rows(payroll.compute_month(g.conn, month))
 
 
 @app.route("/payroll", methods=["GET", "POST"])
@@ -1105,7 +1140,7 @@ def export_payroll(fmt):
 
 def report_rows(month, eid=None):
     """Live day tables; for a finalized month the frozen summary/pay snapshot is used for the money."""
-    rows = payroll.compute_month(g.conn, month, employee_ids={eid} if eid else None)
+    rows = sort_rows(payroll.compute_month(g.conn, month, employee_ids={eid} if eid else None))
     run, saved = payroll.load_saved(g.conn, month)
     if run and run["status"] == "final":
         snap = {it["employee_id"]: it for it in saved}
@@ -1154,7 +1189,7 @@ def export_bank():
 @app.route("/export/muster.xlsx")
 def export_muster():
     month = cur_month()
-    rows = payroll.compute_month(g.conn, month)
+    rows = sort_rows(payroll.compute_month(g.conn, month))
     start, end = engine.month_range(month)
     dates = [start + dt.timedelta(days=i) for i in range((end - start).days + 1)]
     header = ["Emp ID", "Name"] + [d.strftime("%d %a") for d in dates] + ["Present", "Half", "Absent", "WO", "WOP", "MP", "Payable", "Worked Hrs", "OT Hrs"]

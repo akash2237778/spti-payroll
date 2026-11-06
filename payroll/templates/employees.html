@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import csrf_field, sort_toggle with context %}
 {% block title %}Employees{% endblock %}
 {% block body %}
 <h1>Employees
@@ -6,6 +6,7 @@
     {% for k, l in [('active','Active'),('inactive','Inactive'),('all','All')] %}
     <a class="btn small {{ '' if show==k else 'light' }}" href="{{ url_for('employees', show=k) }}">{{ l }}</a>{% endfor %}
   </span>
+  {{ sort_toggle() }}
 </h1>
 <div class="toolbar">
   {% if can_edit %}<a class="btn" href="{{ url_for('employee_edit') }}">+ Add employee</a>{% endif %}
