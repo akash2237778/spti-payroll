@@ -54,6 +54,15 @@ Corrections are made on **punches**, not days. Pairing is recomputed every time,
     advances, bank details or salary exports anywhere. Enforced on the server: pay fields an HR user submits are ignored.
   - **Viewer** – read-only attendance, no salaries.
 
+## Paying salary: bank / cash, advances, staff
+
+- **Bank / cash**: each employee is paid all by bank, all in cash, a fixed amount by bank (rest cash) or a percentage by bank.
+  The bank amount can be changed for one month on the attendance page. The payroll register shows Bank and Cash
+  columns; the bank transfer sheet lists bank amounts only and the printable cash sheet has a signature column.
+- **Advances**: record an advance (with an optional monthly instalment) under Advances & Allowances; each month recover
+  the full balance, one instalment or any amount (never more than the balance or that month's pay). The balance carries over.
+- **Staff**: paid on payable days only, overtime never paid. Workers are paid overtime.
+
 ## How hours and pay are calculated
 
 | Rule | Default (editable) |

@@ -3,6 +3,7 @@ import csv
 import datetime as dt
 import functools
 import io
+import math
 import os
 import secrets
 
@@ -26,7 +27,7 @@ def _secret_key():
 
 
 app.config["SECRET_KEY"] = os.environ.get("PAYROLL_SECRET") or _secret_key()
-app.jinja_env.globals.update(fmt_min=engine.fmt_min, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
+app.jinja_env.globals.update(fmt_min=engine.fmt_min, PAY_MODES=payroll.PAY_MODES, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
                              OVERRIDE_STATUSES=engine.OVERRIDE_STATUSES, WEEKDAYS=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
 
 
@@ -135,7 +136,7 @@ PAY_ROLES = {"admin"}
 EDIT_ROLES = {"admin", "hr"}
 # Employee fields only someone who may see pay can read or change.
 PAY_FIELDS = ["category", "salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled",
-              "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"]
+              "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes", "pay_mode", "bank_value"]
 
 
 def _role():
@@ -368,7 +369,7 @@ def device_action(did, action):
 
 EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
               "shift_id", "category", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
-              "esi_no", "notes"]
+              "esi_no", "notes", "pay_mode", "bank_value"]
 EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break"]
 
 
@@ -435,6 +436,8 @@ def employee_edit(eid):
         vals["ot_multiplier"] = float(vals["ot_multiplier"] or 1)
         vals["salary_type"] = vals["salary_type"] if vals["salary_type"] in ("monthly", "daily", "hourly") else "monthly"
         vals["category"] = vals["category"] if vals["category"] in ("worker", "staff") else "worker"
+        vals["pay_mode"] = vals["pay_mode"] if vals["pay_mode"] in payroll.PAY_MODES else "bank"
+        vals["bank_value"] = max(0.0, float(vals["bank_value"] or 0))
         vals["shift_id"] = int(vals["shift_id"]) if vals["shift_id"] else None
         for k in EMP_FLAGS:
             vals[k] = 1 if f.get(k) else 0
@@ -521,13 +524,108 @@ def employee_salary(eid):
     vals = {"category": f.get("category") if f.get("category") in ("worker", "staff") else "worker",
             "salary_type": f.get("salary_type") if f.get("salary_type") in ("monthly", "daily", "hourly") else "monthly",
             "salary_rate": rate, "ot_enabled": 1 if f.get("ot_enabled") else 0, "ot_multiplier": mult,
-            "pf_enabled": 1 if f.get("pf_enabled") else 0, "esi_enabled": 1 if f.get("esi_enabled") else 0}
+            "pf_enabled": 1 if f.get("pf_enabled") else 0, "esi_enabled": 1 if f.get("esi_enabled") else 0,
+            "pay_mode": f.get("pay_mode") if f.get("pay_mode") in payroll.PAY_MODES else (emp["pay_mode"] or "bank"),
+            "bank_value": max(0.0, float(f.get("bank_value") or 0))}
     before = {k: emp[k] for k in vals}
     g.conn.execute(f"UPDATE employees SET {', '.join(k + '=?' for k in vals)} WHERE id=?", list(vals.values()) + [eid])
     audit("employee_salary_edit", {"id": eid, "name": emp["name"], "from": before, "to": vals})
     flash(f"Salary settings for {emp['name']} saved; unfinalized months recalculated", "ok")
     back = f.get("back", "")
     return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid))
+
+
+@app.route("/employees/<int:eid>/split", methods=["POST"])
+@pay_required
+def pay_split(eid):
+    """Bank amount for one month (rest of net pay in cash); reset = back to the employee default."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    ensure_unlocked(month)
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    if f.get("action") == "reset" or not f.get("bank_amount", "").strip():
+        g.conn.execute("DELETE FROM pay_splits WHERE employee_id=? AND month=?", (eid, month))
+        flash(f"{emp['name']}: bank / cash back to the default ({payroll.PAY_MODES.get(emp['pay_mode'] or 'bank')})", "ok")
+    else:
+        try:
+            amount = float(f["bank_amount"])
+            assert amount >= 0
+        except (ValueError, AssertionError):
+            flash("Bank amount must be a positive number", "error")
+            return redirect(back)
+        g.conn.execute("""INSERT INTO pay_splits(employee_id, month, bank_amount, note, created_by, created_at) VALUES (?,?,?,?,?,?)
+                          ON CONFLICT(employee_id, month) DO UPDATE SET bank_amount=excluded.bank_amount, note=excluded.note,
+                          created_by=excluded.created_by, created_at=excluded.created_at""",
+                       (eid, month, amount, f.get("note", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+        flash(f"{emp['name']} {month}: {g.settings.get('currency', '₹')}{amount:,.0f} by bank, the rest in cash", "ok")
+    audit("pay_split", {"emp": eid, "month": month, "bank": f.get("bank_amount"), "action": f.get("action")})
+    return redirect(back)
+
+
+def set_advance_recovery(emp, month, amount, note=""):
+    """Replace this month's advance recovery for an employee. Returns an error message or None."""
+    ensure_unlocked(month)
+    led = payroll.advance_ledger(g.conn, month, [emp["id"]]).get(emp["id"])
+    if not led or led["outstanding_before"] <= 0:
+        return "No advance outstanding for this employee"
+    if amount < 0 or amount > led["outstanding_before"] + 0.005:
+        return f"Recovery must be between 0 and the outstanding {led['outstanding_before']:,.2f}"
+    rows = payroll.compute_month(g.conn, month, employee_ids={emp["id"]})
+    if rows:
+        pay = rows[0]["pay"]
+        # exact pay before any advance recovery, rounded DOWN so net pay can never end up below zero
+        net_without = math.floor(pay["gross"] - (pay["total_deductions"] - pay["advance"]) + 1e-9)
+        if amount > net_without + 1e-9:
+            return f"Recovery {amount:,.2f} is more than this month's pay before recovery ({net_without:,.2f})"
+    g.conn.execute("DELETE FROM adjustments WHERE employee_id=? AND month=? AND kind='advance'", (emp["id"], month))
+    if amount > 0:
+        g.conn.execute("INSERT INTO adjustments(employee_id, month, kind, amount, note) VALUES (?,?, 'advance', ?, ?)",
+                       (emp["id"], month, amount, note or "advance recovery"))
+    audit("advance_recovery", {"emp": emp["id"], "month": month, "amount": amount, "outstanding_before": led["outstanding_before"]})
+    return None
+
+
+@app.route("/advances", methods=["POST"])
+@pay_required
+def advances_action():
+    f = request.form
+    month = f.get("month") or cur_month()
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("adjustments", month=month)
+    act = f.get("action")
+    if act == "give":
+        emp = g.conn.execute("SELECT * FROM employees WHERE id=?", (int(f["employee_id"]),)).fetchone() or abort(404)
+        try:
+            amount = float(f["amount"])
+            inst = float(f["installment"]) if f.get("installment", "").strip() else None
+            assert amount > 0 and (inst is None or inst > 0)
+        except (ValueError, AssertionError):
+            flash("Advance and instalment must be positive amounts", "error")
+            return redirect(back)
+        g.conn.execute("INSERT INTO advances(employee_id, given_date, amount, installment, note, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
+                       (emp["id"], f["given_date"], amount, inst, f.get("note", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+        audit("advance_given", {"emp": emp["id"], "date": f["given_date"], "amount": amount, "installment": inst})
+        flash(f"Advance of {amount:,.0f} recorded for {emp['name']}", "ok")
+    elif act == "delete_advance":
+        a = g.conn.execute("SELECT * FROM advances WHERE id=?", (int(f["id"]),)).fetchone() or abort(404)
+        g.conn.execute("DELETE FROM advances WHERE id=?", (a["id"],))
+        audit("advance_delete", dict(a))
+        flash("Advance entry removed", "ok")
+    elif act in ("recover", "recover_full", "recover_installment"):
+        emp = g.conn.execute("SELECT * FROM employees WHERE id=?", (int(f["employee_id"]),)).fetchone() or abort(404)
+        led = payroll.advance_ledger(g.conn, month, [emp["id"]]).get(emp["id"]) or {}
+        try:
+            amount = (led.get("outstanding_before", 0) if act == "recover_full" else
+                      led.get("suggest", 0) if act == "recover_installment" else float(f.get("amount") or 0))
+        except ValueError:
+            flash("Recovery must be an amount", "error")
+            return redirect(back)
+        err = set_advance_recovery(emp, month, round(amount, 2), f.get("note", ""))
+        flash(err or f"{emp['name']} {month}: advance recovery set to {amount:,.2f}", "error" if err else "ok")
+    return redirect(back)
 
 
 @app.route("/employees/bulk", methods=["GET", "POST"])
@@ -539,13 +637,15 @@ def employees_bulk():
         n = 0
         for eid in f.getlist("id"):
             g.conn.execute("""UPDATE employees SET department=?, salary_type=?, salary_rate=?, ot_enabled=?, ot_multiplier=?,
-                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=?, category=? WHERE id=?""",
+                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=?, category=?, pay_mode=?, bank_value=? WHERE id=?""",
                            (f.get(f"department_{eid}", ""), f.get(f"salary_type_{eid}", "monthly"),
                             float(f.get(f"salary_rate_{eid}") or 0), 1 if f.get(f"ot_enabled_{eid}") else 0,
                             float(f.get(f"ot_multiplier_{eid}") or 1), 1 if f.get(f"pf_enabled_{eid}") else 0,
                             1 if f.get(f"esi_enabled_{eid}") else 0, int(f.get(f"shift_id_{eid}") or 0) or None,
                             1 if f.get(f"paid_break_{eid}") else 0,
-                            f.get(f"category_{eid}") if f.get(f"category_{eid}") in ("worker", "staff") else "worker", int(eid)))
+                            f.get(f"category_{eid}") if f.get(f"category_{eid}") in ("worker", "staff") else "worker",
+                            f.get(f"pay_mode_{eid}") if f.get(f"pay_mode_{eid}") in payroll.PAY_MODES else "bank",
+                            max(0.0, float(f.get(f"bank_value_{eid}") or 0)), int(eid)))
             n += 1
         audit("employee_bulk_save", f"{n} employees")
         flash(f"Updated {n} employees", "ok")
@@ -684,7 +784,8 @@ def att_employee(eid):
     locked = payroll.run_status(g.conn, month) == "final"
     others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY " + emp_order_sql()).fetchall()
     m_start, m_end = engine.month_range(month)
-    return render_template("employee_month.html", row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
+    adv = payroll.advance_ledger(g.conn, month, [eid]).get(eid) if can_pay() else None
+    return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
                            history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
 
@@ -1068,6 +1169,8 @@ def adjustments():
         if f.get("delete"):
             g.conn.execute("DELETE FROM adjustments WHERE id = ?", (int(f["delete"]),))
         else:
+            if f["kind"] not in ("allowance", "bonus", "deduction", "tds"):
+                abort(400, "Advance recoveries are set in the Advances section")
             g.conn.execute("INSERT INTO adjustments(employee_id, month, kind, amount, note) VALUES (?,?,?,?,?)",
                            (int(f["employee_id"]), month, f["kind"], float(f["amount"]), f.get("note", "")))
         audit("adjustment_save", dict(f))
@@ -1075,8 +1178,15 @@ def adjustments():
     rows = g.conn.execute("""SELECT a.*, e.name, e.device_user_id FROM adjustments a JOIN employees e ON e.id=a.employee_id
                              WHERE a.month = ? ORDER BY e.name""", (month,)).fetchall()
     emps = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY name").fetchall()
+    ledger = payroll.advance_ledger(g.conn, month)
+    names = {e["id"]: e for e in g.conn.execute("SELECT id, name, device_user_id FROM employees")}
+    open_adv = sorted(((names[k], v) for k, v in ledger.items() if k in names and (v["outstanding_before"] > 0 or v["this_month"])),
+                      key=lambda kv: kv[0]["name"].lower())
+    given = g.conn.execute("""SELECT a.*, e.name, e.device_user_id FROM advances a JOIN employees e ON e.id=a.employee_id
+                              ORDER BY a.given_date DESC, a.id DESC LIMIT 200""").fetchall()
     prev, nxt = month_nav(month)
-    return render_template("adjustments.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt)
+    return render_template("adjustments.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt, open_adv=open_adv,
+                           given=given, locked=payroll.run_status(g.conn, month) == "final", today=dt.date.today().isoformat())
 
 
 # ------------------------------------------------------------------ changes made on top of machine data
@@ -1178,6 +1288,8 @@ def payroll_view():
     run, rows = payroll_rows(month)
     totals = {k: sum(r["pay"][k] for r in rows) for k in ("basic", "ot_pay", "allowance", "bonus", "gross", "pf", "esi",
                                                           "advance", "tds", "other_deduction", "total_deductions", "net")}
+    totals["bank"] = sum(r["pay"].get("bank", r["pay"]["net"]) for r in rows)
+    totals["cash"] = sum(r["pay"].get("cash", 0) for r in rows)
     unpriced = [r for r in rows if not r["pay"]["rate"]]
     prev, nxt = month_nav(month)
     return render_template("payroll.html", rows=rows, run=run, month=month, totals=totals, prev=prev, nxt=nxt, unpriced=unpriced)
@@ -1311,7 +1423,27 @@ def export_bank():
     _, rows = payroll_rows(month)
     return csv_response(f"bank_transfer_{month}.csv", ["Emp ID", "Name", "Bank", "Account No", "IFSC", "Amount"],
                         [[r["emp"]["device_user_id"], r["emp"]["name"], r["emp"].get("bank_name", ""), r["emp"].get("bank_account", ""),
-                          r["emp"].get("ifsc", ""), r["pay"]["net"]] for r in rows if r["pay"]["net"] > 0])
+                          r["emp"].get("ifsc", ""), r["pay"].get("bank", r["pay"]["net"])] for r in rows if r["pay"].get("bank", r["pay"]["net"]) > 0])
+
+
+@app.route("/export/cash.csv")
+@pay_required
+def export_cash():
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    return csv_response(f"cash_payments_{month}.csv", ["Emp ID", "Name", "Department", "Net pay", "By bank", "Cash", "Signature"],
+                        [[r["emp"]["device_user_id"], r["emp"]["name"], r["emp"].get("department", ""), r["pay"]["net"],
+                          r["pay"].get("bank", r["pay"]["net"]), r["pay"].get("cash", 0), ""] for r in rows if r["pay"].get("cash", 0) > 0])
+
+
+@app.route("/payroll/cash")
+@pay_required
+def cash_sheet():
+    """Printable cash distribution sheet with a signature column."""
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    rows = [r for r in rows if r["pay"].get("cash", 0) > 0]
+    return render_template("cash_sheet.html", rows=rows, month=month, total=sum(r["pay"]["cash"] for r in rows))
 
 
 @app.route("/export/muster.xlsx")

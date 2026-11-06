@@ -34,6 +34,8 @@
     <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if e.esi_enabled }}> ESI</label>{% endif %}</div>
 </div></div>
 {% if can_pay %}<div class="card"><h2>Bank &amp; statutory</h2><div class="form-grid">
+  <div><label>Salary paid</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (e.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>
+  <div><label>Bank amount ({{ cur }}) or % (for fixed / percentage)</label><input name="bank_value" type="number" step="0.01" min="0" value="{{ e.bank_value or 0 }}"></div>
   <div><label>Bank name</label><input name="bank_name" value="{{ e.bank_name or '' }}"></div>
   <div><label>Account number</label><input name="bank_account" value="{{ e.bank_account or '' }}"></div>
   <div><label>IFSC</label><input name="ifsc" value="{{ e.ifsc or '' }}"></div>

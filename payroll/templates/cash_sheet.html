@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Cash sheet {{ month }}{% endblock %}
+{% block body %}
+<div class="toolbar noprint"><button onclick="window.print()">Print</button>
+  <a class="btn light" href="{{ url_for('export_cash', month=month) }}">CSV</a>
+  <span class="muted">{{ rows|length }} employee(s) paid in cash · total {{ cur }}{{ total|money }}</span></div>
+<div class="card">
+  <h2 style="margin-top:0">{{ settings.company_name }} · Cash salary distribution · {{ month }}</h2>
+  <table>
+    <tr><th>#</th><th>Emp ID</th><th>Name</th><th>Department</th><th class="n">Net pay</th><th class="n">By bank</th><th class="n">Cash</th><th style="width:180px">Signature</th></tr>
+    {% for r in rows %}<tr><td>{{ loop.index }}</td><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td><td>{{ r.emp.department }}</td>
+      <td class="n">{{ r.pay.net|money }}</td><td class="n">{{ r.pay.bank|money }}</td><td class="n"><b>{{ r.pay.cash|money }}</b></td><td style="height:34px"></td></tr>
+    {% else %}<tr><td colspan="8" class="muted">Nobody is paid in cash for {{ month }}.</td></tr>{% endfor %}
+    <tr><th colspan="6">Total cash</th><th class="n">{{ cur }}{{ total|money }}</th><th></th></tr>
+  </table>
+  <div class="small muted" style="margin-top:30px;display:flex;justify-content:space-between"><span>Prepared by</span><span>Cash paid by</span><span>Approved by</span></div>
+</div>
+{% endblock %}

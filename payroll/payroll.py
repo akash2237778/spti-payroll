@@ -19,7 +19,29 @@ def r2(x):
     return round(float(x) + 1e-9, 2)
 
 
-def calculate(emp, summary, month, settings, adjustments=()):
+PAY_MODES = {"bank": "All by bank", "cash": "All in cash", "fixed": "Fixed amount by bank, rest cash",
+             "percent": "Percentage by bank, rest cash"}
+
+
+def split_bank_cash(emp, net, bank_override=None):
+    """(bank, cash, how) for a net amount: this month's override wins, else the employee's default pay mode."""
+    mode = (emp.get("pay_mode") or "bank")
+    val = float(emp.get("bank_value") or 0)
+    if bank_override is not None:
+        bank, how = float(bank_override), "set for this month"
+    elif mode == "cash":
+        bank, how = 0.0, PAY_MODES["cash"]
+    elif mode == "fixed":
+        bank, how = val, f"fixed {val:g} by bank"
+    elif mode == "percent":
+        bank, how = round_half_up(net * val / 100), f"{val:g}% by bank"
+    else:
+        bank, how = net, PAY_MODES["bank"]
+    bank = max(0.0, min(float(net), bank))
+    return bank, float(net) - bank, how
+
+
+def calculate(emp, summary, month, settings, adjustments=(), bank_override=None):
     """Pure salary calculation for one employee-month. Returns a dict of line items."""
     y, m = map(int, month.split("-"))
     cal_days = calendar.monthrange(y, m)[1]
@@ -80,6 +102,8 @@ def calculate(emp, summary, month, settings, adjustments=()):
         "ot_hours_gross": r2(summary.get("ot_min_gross", summary["ot_min"]) / 60.0),
         "late_penalty_hours": r2(summary.get("late_penalty_min", 0) / 60.0),
         "std_hours": r2(std_hours), "category": "staff" if is_staff else "worker",
+        **dict(zip(("bank", "cash", "pay_how"), split_bank_cash(emp, round_half_up(net), bank_override))),
+        "bank_override": bank_override is not None,
     }
 
 
@@ -99,6 +123,7 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None):
     for a in conn.execute("SELECT * FROM adjustments WHERE month = ?", (month,)):
         adjs.setdefault(a["employee_id"], []).append(dict(a))
     overrides = month_overrides(conn, month)
+    splits = {r["employee_id"]: r["bank_amount"] for r in conn.execute("SELECT * FROM pay_splits WHERE month = ?", (month,))}
     rows = []
     for e in emps:
         d = data[e["id"]]
@@ -106,7 +131,7 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None):
         apply_month_override(summary, overrides.get(e["id"]))
         if not e["active"] and summary["worked_min"] == 0 and not adjs.get(e["id"]):
             continue
-        pay = calculate(e, summary, month, settings, adjs.get(e["id"], []))
+        pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]))
         rows.append({"emp": e, "days": d["days"], "shift": d["shift"], "summary": summary, "pay": pay})
     return rows
 
@@ -132,6 +157,32 @@ def apply_month_override(summary, ov):
     if summary["edited"]:
         summary["edit_reason"], summary["edit_by"], summary["edit_at"] = ov.get("reason") or "", ov.get("created_by") or "", ov.get("created_at") or ""
     return summary
+
+
+def advance_ledger(conn, month, employee_ids=None):
+    """Per employee: advances given (up to this month), recovered before / in this month, balance.
+    Recoveries are the 'advance' adjustments, one month at a time."""
+    end = month + "-31"
+    led = {}
+    q_ids = "" if employee_ids is None else f" AND employee_id IN ({','.join(str(int(i)) for i in employee_ids)})"
+    for r in conn.execute(f"SELECT * FROM advances WHERE given_date <= ?{q_ids} ORDER BY given_date, id", (end,)):
+        e = led.setdefault(r["employee_id"], {"given": 0.0, "recovered_before": 0.0, "this_month": 0.0, "items": [], "installment": None})
+        e["given"] += float(r["amount"])
+        e["items"].append(dict(r))
+        if r["installment"]:
+            e["installment"] = float(r["installment"])
+    for r in conn.execute(f"SELECT employee_id, month, SUM(amount) AS s FROM adjustments WHERE kind = 'advance'{q_ids} GROUP BY employee_id, month"):
+        e = led.setdefault(r["employee_id"], {"given": 0.0, "recovered_before": 0.0, "this_month": 0.0, "items": [], "installment": None})
+        if r["month"] < month:
+            e["recovered_before"] += float(r["s"])
+        elif r["month"] == month:
+            e["this_month"] += float(r["s"])
+    for e in led.values():
+        e["outstanding_before"] = round(e["given"] - e["recovered_before"], 2)
+        e["remaining"] = round(e["outstanding_before"] - e["this_month"], 2)
+        inst = e["installment"] or e["outstanding_before"]
+        e["suggest"] = max(0.0, round(min(inst, e["outstanding_before"]), 2))
+    return led
 
 
 def run_status(conn, month):

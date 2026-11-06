@@ -490,3 +490,65 @@ def test_end_to_end(client):
     assert "Edit salary" not in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
     assert "Staff</span>" in c.get("/employees").data.decode()            # HR still sees who is staff
     login_as("admin", "secret123")
+
+    # 15. bank / cash split and advances with partial / full recovery
+    post(c, f"/employees/{kam}/salary", category="worker", salary_type="monthly", salary_rate="18000", ot_multiplier="1",
+         ot_enabled="on", pay_mode="fixed", bank_value="8000")
+    with db.tx() as conn:
+        p15 = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert p15["bank"] == min(8000, p15["net"]) and p15["bank"] + p15["cash"] == p15["net"] and p15["cash"] > 0
+    post(c, f"/employees/{kam}/split", month="2026-10", bank_amount="5000")
+    with db.tx() as conn:
+        p15b = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert p15b["bank"] == 5000 and p15b["cash"] == p15b["net"] - 5000 and p15b["bank_override"]
+    bank_csv = c.get("/export/bank.csv?month=2026-10").data.decode()
+    cash_csv = c.get("/export/cash.csv?month=2026-10").data.decode()
+    assert ",5000" in bank_csv and str(int(p15b["cash"])) in cash_csv
+    assert "Cash salary distribution" in c.get("/payroll/cash?month=2026-10").data.decode()
+    reg = c.get("/payroll?month=2026-10").data.decode()
+    assert "By bank" in reg and "In cash" in reg
+
+    # advance: 6000 given, instalment 2500; partial in Oct, too much refused, full in Nov
+    post(c, "/advances", action="give", employee_id=str(kam), given_date="2026-10-05", amount="6000", installment="2500", month="2026-10")
+    post(c, "/advances", action="recover_installment", employee_id=str(kam), month="2026-10")
+    with db.tx() as conn:
+        led = pr.advance_ledger(conn, "2026-10", [kam])[kam]
+        p15c = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert led["this_month"] == 2500 and led["remaining"] == 3500
+    assert p15c["advance"] == 2500 and p15c["net"] == p15b["net"] - 2500
+    r = post(c, "/advances", action="recover", employee_id=str(kam), amount="7000", month="2026-10")
+    assert "between 0 and the outstanding" in r.data.decode()
+    post(c, "/advances", action="recover", employee_id=str(kam), amount="1000", month="2026-10")       # partial change
+    with db.tx() as conn:
+        assert pr.advance_ledger(conn, "2026-10", [kam])[kam]["this_month"] == 1000
+    with db.tx() as conn:
+        _np = pr.compute_month(conn, "2026-11", employee_ids={kam})[0]["pay"]
+        nov_net = int(_np["gross"] - _np["total_deductions"] + 1e-9)        # most that can be recovered
+    r = post(c, "/advances", action="recover_full", employee_id=str(kam), month="2026-11")
+    if nov_net < 5000:      # November is only a few days old: pay is smaller than the balance -> refused
+        assert "more than this month" in r.data.decode()
+        post(c, "/advances", action="recover", employee_id=str(kam), amount=str(int(nov_net)), month="2026-11")
+    with db.tx() as conn:
+        nov15 = pr.advance_ledger(conn, "2026-11", [kam])[kam]
+        dec15 = pr.advance_ledger(conn, "2026-12", [kam])[kam]
+        nov_pay = pr.compute_month(conn, "2026-11", employee_ids={kam})[0]["pay"]
+    took = min(5000, int(nov_net)) if nov_net < 5000 else 5000
+    assert nov15["outstanding_before"] == 5000 and nov15["this_month"] == took
+    assert dec15["outstanding_before"] == 5000 - took and nov_pay["net"] >= 0
+    pg15 = c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "Outstanding at start of 2026-10" in pg15 and "Paid in cash" in pg15
+    assert "No advances outstanding" not in c.get("/adjustments?month=2026-10").data.decode()
+    # Excel: bank / cash cells are formulas that agree with the app
+    r = c.get(f"/export/payroll_formulas.xlsx?month=2026-10&eid={kam}")
+    p15x = os.path.join(tempfile.mkdtemp(), "b.xlsx"); open(p15x, "wb").write(r.data)
+    x15 = ExcelCompiler(filename=p15x)
+    with db.tx() as conn:
+        p15d = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert abs(x15.evaluate("Payroll!V4") - p15d["net"]) < 0.5
+    assert abs(x15.evaluate("Payroll!W4") - p15d["bank"]) < 0.5 and abs(x15.evaluate("Payroll!X4") - p15d["cash"]) < 0.5
+    # HR cannot touch money
+    login_as("hr1", "hrpass123")
+    assert post(c, "/advances", action="give", employee_id=str(kam), given_date="2026-10-05", amount="1").status_code == 403
+    assert post(c, f"/employees/{kam}/split", month="2026-10", bank_amount="1").status_code == 403
+    assert "Outstanding at start" not in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    login_as("admin", "secret123")

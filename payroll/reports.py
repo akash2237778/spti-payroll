@@ -101,6 +101,10 @@ def calc_lines(row, settings, cur="₹"):
             lines.append((label, "", money(p[k], cur)))
     lines.append(("Total deductions", "", money(p["total_deductions"], cur)))
     lines.append(("Net pay", f"{money(p['gross'], cur)} − {money(p['total_deductions'], cur)}, rounded to the rupee", money(p["net"], cur)))
+    if "bank" in p:
+        lines.append(("Paid by bank", p.get("pay_how", ""), money(p["bank"], cur)))
+        if p.get("cash"):
+            lines.append(("Paid in cash", f"{money(p['net'], cur)} − {money(p['bank'], cur)}", money(p["cash"], cur)))
     return lines
 
 
@@ -179,7 +183,7 @@ def build_workbook(rows, month, settings, company=""):
             ("Payable days", "payable"), ("Worked hrs", "worked_h"), ("OT hrs (net)", "ot_h"), ("Per day", "per_day"),
             ("Hour rate", "hour_rate"), ("Basic", "basic"), ("OT pay", "ot_pay"), ("Allowance", "allow"), ("Bonus", "bonus"),
             ("Gross", "gross"), ("PF", "pf"), ("ESI", "esi"), ("Advance", "adv"), ("TDS", "tds"), ("Other ded.", "oth"),
-            ("Total ded.", "ded"), ("Net pay", "net")]
+            ("Total ded.", "ded"), ("Net pay", "net"), ("By bank", "bank"), ("Cash", "cash")]
     pay_ws["A1"] = f"{company} payroll register {month} — every figure links to the employee's sheet"
     pay_ws["A1"].font = Font(bold=True, size=13)
     _hdr(pay_ws, 3, [c[0] for c in cols])
@@ -308,6 +312,18 @@ def _employee_sheet(wb, row, month, settings, R, title):
     # ---- summary + salary, each a formula
     r0 = tr + 2
     cells = {}
+    # bank part of net pay: this month's amount / fixed amount as an input; percentage and "all bank" as formulas
+    mode, bval = (e.get("pay_mode") or "bank"), float(e.get("bank_value") or 0)
+    if p.get("bank_override"):
+        bank_rule = ("Bank amount (set for this month)", p["bank"], "bank_target")
+    elif mode == "cash":
+        bank_rule = ("Bank amount (all in cash)", 0, "bank_target")
+    elif mode == "fixed":
+        bank_rule = ("Bank amount (fixed)", bval, "bank_target")
+    elif mode == "percent":
+        bank_rule = (f"Bank amount ({bval:g}% of net)", f"=ROUND({{net}}*{bval}/100,0)", "bank_target")
+    else:
+        bank_rule = ("Bank amount (all by bank)", "={net}", "bank_target")
     ed_days = bool((s.get("edited") or {}).get("payable_days"))
     ed_ot = bool((s.get("edited") or {}).get("ot_min"))
     plan = [
@@ -350,6 +366,9 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ("Other deduction", p["other_deduction"], "oth"),
         ("TOTAL DEDUCTIONS", "={pf}+{esi}+{adv}+{tds}+{oth}", "ded"),
         ("NET PAY", "=ROUND({gross}-{ded},0)", "net"),
+        bank_rule,
+        ("PAID BY BANK", "=MIN(MAX(0,{net}),MAX(0,{bank_target}))", "bank"),
+        ("PAID IN CASH", "={net}-{bank}", "cash"),
     ]
     ws.cell(row=r0 - 1, column=1, value="Summary & salary calculation (formulas)").font = Font(bold=True, size=12)
     for i, (label, _, key) in enumerate(plan):
@@ -367,7 +386,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
         if label.isupper():
             ws.cell(row=r, column=1).font = BOLD
             c.font = BOLD
-        if key in ("per_day", "hour_rate", "basic", "ot_pay", "allow", "bonus", "gross", "pf", "esi", "adv", "tds", "oth", "ded", "net"):
+        if key in ("per_day", "hour_rate", "basic", "ot_pay", "allow", "bonus", "gross", "pf", "esi", "adv", "tds", "oth", "ded", "net",
+                   "bank_target", "bank", "cash"):
             c.number_format = "#,##0.00"
     widths = {"A": 36, "B": 14, "C": 9, "D": 7, "E": 14, "F": 14, "Q": 30}
     for i in range(1, 26):

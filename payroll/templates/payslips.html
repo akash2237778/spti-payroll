@@ -27,6 +27,7 @@
     <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th><th>Total deductions</th><th class="n">{{ p.total_deductions|money }}</th></tr>
   </table>
   <div class="net">Net pay: {{ cur }}{{ p.net|money }}</div>
+  {% if p.get('cash') %}<div style="text-align:right">Paid by bank {{ cur }}{{ p.bank|money }} · in cash {{ cur }}{{ p.cash|money }}</div>{% endif %}
   <div class="small muted" style="margin-top:30px;display:flex;justify-content:space-between"><span>Employer signature</span><span>Employee signature</span></div>
 </div>
 {% endfor %}

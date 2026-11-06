@@ -1,14 +1,66 @@
 {% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
 {% block title %}Advances &amp; allowances {{ month }}{% endblock %}
 {% block body %}
-<h1>Advances, allowances &amp; deductions {{ monthnav('adjustments', month, prev, nxt) }}</h1>
-<p class="muted">One-off amounts for this month's payroll. Allowance and bonus add to gross pay; advance recovery, TDS and other deductions reduce net pay.</p>
-{% if can_pay %}
+<h1>Advances, allowances &amp; deductions {{ monthnav('adjustments', month, prev, nxt) }}
+  {% if locked %}<span class="badge bad">payroll finalized - read only</span>{% endif %}</h1>
+
+<h2>Advances</h2>
+<p class="muted" style="margin-top:0">Record an advance when it is given, then choose each month how much to recover from salary:
+the full balance, the monthly instalment, or any amount. The balance carries over until it is cleared.</p>
+{% if not locked %}
+<form method="post" action="{{ url_for('advances_action') }}" class="card row">{{ csrf_field() }}
+  <input type="hidden" name="action" value="give"><input type="hidden" name="month" value="{{ month }}">
+  <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
+  <div><label>Date given</label><input type="date" name="given_date" value="{{ today }}" required></div>
+  <div><label>Advance ({{ cur }})</label><input type="number" step="0.01" min="1" name="amount" required style="width:110px"></div>
+  <div><label>Monthly instalment ({{ cur }}, optional)</label><input type="number" step="0.01" min="1" name="installment" style="width:120px"></div>
+  <div class="grow"><label>Note</label><input name="note" style="width:100%"></div>
+  <button>Record advance</button>
+</form>
+{% endif %}
+<div class="scroll" style="max-height:none"><table>
+  <tr><th>Employee</th><th class="n">Total given</th><th class="n">Outstanding at start of {{ month }}</th><th class="n">Instalment</th>
+    <th class="n">Recover in {{ month }}</th><th class="n">Balance after</th><th>Set recovery for {{ month }}</th></tr>
+  {% for e, a in open_adv %}
+  <tr>
+    <td>{{ e.name }} <span class="muted small">#{{ e.device_user_id }}</span></td>
+    <td class="n">{{ a.given|money }}</td><td class="n"><b>{{ a.outstanding_before|money }}</b></td>
+    <td class="n">{{ a.installment|money if a.installment else '—' }}</td>
+    <td class="n {{ 'edited' if a.this_month }}">{{ a.this_month|money if a.this_month else '—' }}</td>
+    <td class="n">{{ a.remaining|money }}</td>
+    <td style="white-space:nowrap">{% if not locked and a.outstanding_before > 0 %}
+      <form method="post" action="{{ url_for('advances_action') }}" class="inline">{{ csrf_field() }}
+        <input type="hidden" name="employee_id" value="{{ e.id }}"><input type="hidden" name="month" value="{{ month }}">
+        <input type="number" name="amount" step="0.01" min="0" max="{{ a.outstanding_before }}" value="{{ a.this_month or a.suggest }}" style="width:95px">
+        <button class="small" name="action" value="recover">Set</button>
+        <button class="light small" name="action" value="recover_full" title="Recover the whole balance this month">Full</button>
+        {% if a.installment %}<button class="light small" name="action" value="recover_installment" title="Recover one instalment">Instalment</button>{% endif %}
+        {% if a.this_month %}<button class="light small" name="action" value="recover" formnovalidate onclick="this.form.elements['amount'].value = 0" title="No recovery this month">None</button>{% endif %}
+      </form>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="7" class="muted">No advances outstanding.</td></tr>{% endfor %}
+</table></div>
+{% if given %}
+<details class="card" style="margin-top:10px"><summary style="cursor:pointer"><b>Advance history</b> <span class="muted small">({{ given|length }})</span></summary>
+  <table style="margin-top:8px">
+    <tr><th>Date</th><th>Employee</th><th class="n">Amount</th><th class="n">Instalment</th><th>Note</th><th>By</th><th></th></tr>
+    {% for a in given %}<tr><td>{{ a.given_date }}</td><td>{{ a.name }}</td><td class="n">{{ a.amount|money }}</td>
+      <td class="n">{{ a.installment|money if a.installment else '' }}</td><td class="small">{{ a.note }}</td><td class="small muted">{{ a.created_by }}</td>
+      <td><form method="post" action="{{ url_for('advances_action') }}" class="inline" onsubmit="return confirm('Remove this advance entry? Recoveries already made stay.')">{{ csrf_field() }}
+        <input type="hidden" name="action" value="delete_advance"><input type="hidden" name="id" value="{{ a.id }}"><input type="hidden" name="month" value="{{ month }}">
+        <button class="danger small">Remove</button></form></td></tr>{% endfor %}
+  </table>
+</details>
+{% endif %}
+
+<h2>Allowances &amp; other deductions for {{ month }}</h2>
+<p class="muted" style="margin-top:0">One-off amounts for this month's payroll. Allowance and bonus add to gross pay; TDS and other deductions reduce net pay.</p>
+{% if not locked %}
 <form method="post" class="card row">{{ csrf_field() }}
   <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
   <div><label>Type</label><select name="kind">
-    <option value="advance">Advance recovery (−)</option><option value="deduction">Other deduction (−)</option><option value="tds">TDS (−)</option>
-    <option value="allowance">Allowance (+)</option><option value="bonus">Bonus / incentive (+)</option></select></div>
+    <option value="allowance">Allowance (+)</option><option value="bonus">Bonus / incentive (+)</option>
+    <option value="deduction">Other deduction (−)</option><option value="tds">TDS (−)</option></select></div>
   <div><label>Amount ({{ cur }})</label><input type="number" step="0.01" min="0" name="amount" required></div>
   <div class="grow"><label>Note</label><input name="note" style="width:100%"></div>
   <button>Add</button>
@@ -16,8 +68,8 @@
 {% endif %}
 <table>
   <tr><th>Employee</th><th>Type</th><th class="n">Amount</th><th>Note</th><th></th></tr>
-  {% for a in rows %}<tr><td>{{ a.name }} (#{{ a.device_user_id }})</td><td>{{ a.kind }}</td><td class="n">{{ a.amount|money }}</td><td>{{ a.note }}</td>
-    <td>{% if can_pay %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ a.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
+  {% for a in rows %}<tr><td>{{ a.name }} (#{{ a.device_user_id }})</td><td>{{ 'advance recovery' if a.kind == 'advance' else a.kind }}</td><td class="n">{{ a.amount|money }}</td><td>{{ a.note }}</td>
+    <td>{% if not locked and a.kind != 'advance' %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="delete" value="{{ a.id }}"><button class="danger small">Delete</button></form>{% endif %}</td></tr>
   {% else %}<tr><td colspan="5" class="muted">No entries for {{ month }}.</td></tr>{% endfor %}
 </table>
 {% endblock %}

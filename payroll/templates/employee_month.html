@@ -155,6 +155,8 @@
     <tr><td>PF / ESI</td><td class="n">{{ p.pf|money }} / {{ p.esi|money }}</td></tr>
     <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
     <tr><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
+    <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
+    <tr><td>Paid in cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
   </table>
   <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
     <input type="hidden" name="back" value="{{ request.full_path }}#salary">
@@ -173,9 +175,50 @@
       <label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if emp.pf_enabled }}> PF</label>
       <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if emp.esi_enabled }}> ESI</label>
     </div>
+    <div class="form-grid" style="margin-top:6px">
+      <div><label>Salary paid (default)</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (emp.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>
+      <div><label>Bank amount ({{ cur }}) or %</label><input name="bank_value" type="number" step="0.01" min="0" value="{{ emp.bank_value or 0 }}"></div>
+    </div>
     <p class="small muted" style="margin:6px 0">Saved on the employee's profile: applies to every month whose payroll is not finalized{{ ' (this month is finalized, so it keeps its frozen amounts)' if locked }}.</p>
     <button>Save salary</button>
   </form>
+  </div>
+  <div class="row" style="align-items:flex-start;margin-top:10px">
+    <form method="post" action="{{ url_for('pay_split', eid=emp.id) }}" class="card grow" style="background:#f8fafc">{{ csrf_field() }}
+      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+      <b>Bank / cash for {{ month }}</b>
+      <p class="small muted" style="margin:4px 0">Net {{ cur }}{{ p.net|money }} → bank {{ cur }}{{ p.get('bank', p.net)|money }}, cash {{ cur }}{{ p.get('cash', 0)|money }}
+        ({{ 'set for this month' if p.get('bank_override') else 'default: ' ~ PAY_MODES.get(emp.pay_mode or 'bank') }}).</p>
+      {% if not locked %}
+      <div class="row" style="align-items:flex-end">
+        <div><label>Pay by bank this month ({{ cur }})</label><input name="bank_amount" type="number" step="1" min="0" value="{{ p.bank|int if p.get('bank_override') else '' }}" placeholder="{{ p.get('bank', p.net)|int }}" style="width:120px"></div>
+        <button class="small">Set</button>
+        {% if p.get('bank_override') %}<button class="light small" name="action" value="reset">Use default</button>{% endif %}
+      </div>
+      <p class="small muted" style="margin:4px 0 0">The rest of the net pay is paid in cash.</p>
+      {% endif %}
+    </form>
+    <div class="card grow" style="background:#f8fafc">
+      <b>Advance</b>
+      {% if adv and (adv.outstanding_before > 0 or adv.this_month) %}
+      <table style="margin-top:4px">
+        <tr><td>Outstanding at start of {{ month }}</td><td class="n"><b>{{ cur }}{{ adv.outstanding_before|money }}</b></td></tr>
+        <tr class="{{ 'edited' if adv.this_month }}"><td>Recovered this month</td><td class="n">{{ cur }}{{ adv.this_month|money }}</td></tr>
+        <tr><td>Balance after</td><td class="n">{{ cur }}{{ adv.remaining|money }}</td></tr>
+      </table>
+      {% if not locked and adv.outstanding_before > 0 %}
+      <form method="post" action="{{ url_for('advances_action') }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+        <input type="hidden" name="employee_id" value="{{ emp.id }}"><input type="hidden" name="month" value="{{ month }}">
+        <input type="hidden" name="back" value="{{ request.full_path }}#salary">
+        <div><label>Recover this month ({{ cur }})</label><input type="number" name="amount" step="0.01" min="0" max="{{ adv.outstanding_before }}" value="{{ adv.this_month or adv.suggest }}" style="width:110px"></div>
+        <button class="small" name="action" value="recover">Set</button>
+        <button class="light small" name="action" value="recover_full">Full</button>
+        {% if adv.installment %}<button class="light small" name="action" value="recover_installment">Instalment {{ adv.installment|money }}</button>{% endif %}
+      </form>
+      {% endif %}
+      {% else %}<p class="small muted" style="margin:4px 0">No advance outstanding.</p>{% endif %}
+      <p class="small" style="margin:6px 0 0"><a href="{{ url_for('adjustments', month=month) }}">Give an advance / see history</a></p>
+    </div>
   </div>
   {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
 </div>

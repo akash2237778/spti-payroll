@@ -524,3 +524,42 @@ def test_staff_paid_on_payable_days_only():
     assert pw["ot_pay"] > 0 and ps["ot_pay"] == 0 and ps["ot_hours"] == 0
     assert ps["basic"] == pw["basic"] == round(26000 / 30 * 26, 2) and ps["gross"] == ps["basic"] and ps["category"] == "staff"
     assert payroll.calculate(dict(worker, category=None), s, "2026-11", S)["ot_pay"] == pw["ot_pay"]   # default = worker
+
+
+
+# ---------------------------------------------------------------- bank / cash split and advances
+
+def test_bank_cash_split_modes():
+    sp = payroll.split_bank_cash
+    assert sp({"pay_mode": "bank"}, 20000)[:2] == (20000, 0)
+    assert sp({}, 20000)[:2] == (20000, 0)                                       # default = all bank
+    assert sp({"pay_mode": "cash"}, 20000)[:2] == (0, 20000)
+    assert sp({"pay_mode": "fixed", "bank_value": 15000}, 20000)[:2] == (15000, 5000)
+    assert sp({"pay_mode": "fixed", "bank_value": 15000}, 9000)[:2] == (9000, 0)   # never more than net
+    assert sp({"pay_mode": "percent", "bank_value": 60}, 20001)[:2] == (12001, 8000)
+    assert sp({"pay_mode": "cash"}, 20000, bank_override=7000)[:2] == (7000, 13000)  # this month's amount wins
+    emp = {"salary_type": "monthly", "salary_rate": 30000, "ot_enabled": 0, "ot_multiplier": 1, "pf_enabled": 0,
+           "esi_enabled": 0, "pay_mode": "fixed", "bank_value": 10000}
+    pay = payroll.calculate(emp, {"payable_days": 30, "std_min": 480, "worked_min": 0, "ot_min": 0, "paid_off_days": 0}, "2026-11", S)
+    assert pay["net"] == 30000 and pay["bank"] == 10000 and pay["cash"] == 20000
+
+
+def test_advance_ledger(tmp_path):
+    from payroll import db as dbm
+    old = dbm.DB_PATH
+    dbm.DB_PATH = str(tmp_path / "adv.db")
+    try:
+        dbm.init_db()
+        with dbm.tx() as c:
+            c.execute("INSERT INTO employees(id, device_user_id, name) VALUES (1, '1', 'A')")
+            c.execute("INSERT INTO advances(employee_id, given_date, amount, installment) VALUES (1, '2026-09-10', 6000, 2000)")
+            c.execute("INSERT INTO adjustments(employee_id, month, kind, amount) VALUES (1, '2026-09', 'advance', 2000)")
+            c.execute("INSERT INTO adjustments(employee_id, month, kind, amount) VALUES (1, '2026-10', 'advance', 1500)")
+            oct_ = payroll.advance_ledger(c, "2026-10")[1]
+            nov = payroll.advance_ledger(c, "2026-11")[1]
+            aug = payroll.advance_ledger(c, "2026-08").get(1)
+        assert (oct_["outstanding_before"], oct_["this_month"], oct_["remaining"], oct_["suggest"]) == (4000, 1500, 2500, 2000)
+        assert (nov["outstanding_before"], nov["this_month"], nov["suggest"]) == (2500, 0, 2000)
+        assert aug is None or aug["given"] == 0                                    # not given yet in August
+    finally:
+        dbm.DB_PATH = old
