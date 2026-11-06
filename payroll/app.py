@@ -135,7 +135,7 @@ ROLES = {"admin": "Admin - everything", "hr": "HR - attendance, no salaries", "v
 PAY_ROLES = {"admin"}
 EDIT_ROLES = {"admin", "hr"}
 # Employee fields only someone who may see pay can read or change.
-PAY_FIELDS = ["category", "salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled",
+PAY_FIELDS = ["category", "salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled", "disabled_person",
               "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes", "pay_mode", "bank_value"]
 
 
@@ -370,7 +370,7 @@ def device_action(did, action):
 EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
               "shift_id", "category", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
               "esi_no", "notes", "pay_mode", "bank_value"]
-EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break"]
+EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break", "disabled_person"]
 
 
 @app.route("/employees")
@@ -1291,6 +1291,7 @@ def payroll_view():
     totals = {k: sum(r["pay"][k] for r in rows) for k in ("basic", "ot_pay", "allowance", "bonus", "gross", "pf", "esi",
                                                           "advance", "tds", "other_deduction", "total_deductions", "net")}
     attach_cash_paid(rows, month)
+    totals["esi_employer"] = sum(r["pay"].get("esi_employer", 0) for r in rows)
     totals["bank"] = sum(r["pay"].get("bank", r["pay"]["net"]) for r in rows)
     totals["cash"] = sum(r["pay"].get("cash", 0) for r in rows)
     unpriced = [r for r in rows if not r["pay"]["rate"]]
@@ -1549,6 +1550,43 @@ def cash_carry(eid):
     audit("cash_carry", {"emp": eid, "from": month, "to": nxt, "kind": kind, "amount": amount})
     flash(f"{emp['name']}: {abs(diff):,.2f} {'added to' if diff < 0 else 'deducted from'} {nxt} pay", "ok")
     return redirect(back)
+
+
+def esi_rows(month):
+    _, rows = payroll_rows(month)
+    covered = [r for r in rows if r["pay"].get("esi_covered")]
+    out = [r for r in rows if not r["pay"].get("esi_covered") and r["pay"].get("esi_wages", 0) > 0
+           and payroll.esi_applicable(r["emp"], g.settings)]
+    return covered, out
+
+
+@app.route("/reports/esi")
+@pay_required
+def esi_report():
+    """Monthly ESI contribution statement (employee 0.75% + employer 3.25% on wages u/s 2(88))."""
+    month = cur_month()
+    covered, out = esi_rows(month)
+    tot = {k: sum(r["pay"].get(k, 0) for r in covered) for k in ("esi_wages", "esi", "esi_employer")}
+    y, m = map(int, month.split("-"))
+    due = dt.date(y + (m == 12), 1 if m == 12 else m + 1, 15)
+    period = payroll.contribution_period(month)
+    prev, nxt = month_nav(month)
+    return render_template("esi_report.html", covered=covered, out=out, tot=tot, month=month, due=due, period=period,
+                           prev=prev, nxt=nxt)
+
+
+@app.route("/export/esic_mc.csv")
+@pay_required
+def export_esic_mc():
+    """Monthly contribution file in the ESIC portal's upload layout (IP number, name, days, wages, reason code)."""
+    month = cur_month()
+    covered, _ = esi_rows(month)
+    return csv_response(f"esic_monthly_contribution_{month}.csv",
+                        ["IP Number (10 Digits)", "IP Name (Only alphabets and space)", "No of Days for which wages paid/payable during the month",
+                         "Total Monthly Wages", "Reason Code for Zero workings days", "Last Working Day"],
+                        [[r["emp"].get("esi_no", ""), "".join(ch for ch in r["emp"]["name"] if ch.isalpha() or ch == " ").strip(),
+                          int(r["summary"]["payable_days"]) if float(r["summary"]["payable_days"]).is_integer() else r["summary"]["payable_days"],
+                          int(round(r["pay"]["esi_wages"])), "" if r["summary"]["payable_days"] else "0", ""] for r in covered])
 
 
 @app.route("/export/muster.xlsx")

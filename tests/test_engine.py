@@ -149,7 +149,8 @@ def test_summary_and_monthly_salary():
     assert s["payable_days"] == 30
     emp = {"salary_type": "monthly", "salary_rate": 15000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 0}
     p = payroll.calculate(emp, s, "2026-09", S)
-    assert p["basic"] == 15000 and p["net"] == 15000
+    # ESI applies to every employee (covered establishment): 0.75% of 15,000 = 112.50 -> 113
+    assert p["basic"] == 15000 and p["esi"] == 113 and p["esi_employer"] == 488 and p["net"] == 15000 - 113
 
 
 def test_daily_wage_unpaid_weekoff_and_absence():
@@ -175,8 +176,9 @@ def test_ot_pay_pf_esi_adjustments():
     assert p["per_day"] == 550 and p["hour_rate"] == 50 and p["ot_pay"] == 1000
     assert p["gross"] == 18000
     assert p["pf"] == 1800  # 12% of min(16500, 15000)
-    assert p["esi"] == 135  # 0.75% of 18000
-    assert p["net"] == round(18000 - 1800 - 135 - 1000)
+    # ESI wages exclude overtime: 18000 - 1000 = 17000; 0.75% = 127.50 -> rounded up to 128
+    assert p["esi_wages"] == 17000 and p["esi"] == 128 and p["esi_employer"] == 553
+    assert p["net"] == round(18000 - 1800 - 128 - 1000)
 
 
 def test_late_mark_deduction():
@@ -563,3 +565,35 @@ def test_advance_ledger(tmp_path):
         assert aug is None or aug["given"] == 0                                    # not given yet in August
     finally:
         dbm.DB_PATH = old
+
+
+# ---------------------------------------------------------------- ESIC (Code on Social Security 2020, s.2(88))
+
+def test_esi_wages_exclude_overtime_with_half_rule():
+    assert payroll.esi_wages(18000, 0) == 18000
+    assert payroll.esi_wages(18000, 3000) == 18000                 # OT is an excluded head
+    assert payroll.esi_wages(4000, 6000) == 5000                   # OT > half of total: excess (6000-5000) added back
+    assert payroll.esi_wages(10000, 2000, allowance=1000, bonus=500) == 11500
+
+
+def test_esi_rates_rounding_ceiling_and_low_wage():
+    emp = {"esi_enabled": 0}
+    st = dict(S)
+    c = payroll.esi_contribution(emp, st, basic=15001, ot_pay=0, payable_days=26)
+    assert c["esi_covered"] and c["esi"] == 113 and c["esi_employer"] == 488          # rounded UP to the rupee
+    assert payroll.esi_contribution(emp, st, basic=21000, ot_pay=4000, payable_days=26)["esi_covered"]   # OT not counted
+    assert not payroll.esi_contribution(emp, st, basic=21001, ot_pay=0, payable_days=26)["esi_covered"]
+    assert payroll.esi_contribution(dict(emp, disabled_person=1), st, basic=24000, ot_pay=0, payable_days=26)["esi_covered"]
+    low = payroll.esi_contribution(emp, st, basic=4000, ot_pay=0, payable_days=26)          # 153.85 a day
+    assert low["esi"] == 0 and low["esi_employer"] == 130 and "no employee share" in low["esi_note"]
+    assert payroll.esi_contribution(emp, dict(st, esi_mode="ticked"), basic=15000, ot_pay=0, payable_days=26)["esi"] == 0
+    assert payroll.esi_contribution({"esi_enabled": 1}, dict(st, esi_mode="ticked"), basic=15000, ot_pay=0, payable_days=26)["esi"] == 113
+    # covered at the start of the period: continues even above the ceiling
+    cont = payroll.esi_contribution(emp, st, basic=26000, ot_pay=0, payable_days=26, covered=True)
+    assert cont["esi"] == 195 and "start of the contribution period" in cont["esi_note"]
+
+
+def test_esi_contribution_periods():
+    cp = payroll.contribution_period
+    assert [cp(m) for m in ("2026-04", "2026-09", "2026-10", "2026-12", "2027-01", "2027-03")] == \
+        ["2026-04", "2026-04", "2026-10", "2026-10", "2026-10", "2026-10"]

@@ -17,6 +17,7 @@
   <a class="btn light" href="{{ url_for('export_payroll', fmt='xlsx', month=month) }}">Excel</a>
   <a class="btn light" href="{{ url_for('export_payroll', fmt='csv', month=month) }}">CSV</a>
   <a class="btn light" href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet</a>
+  <a class="btn light" href="{{ url_for('esi_report', month=month) }}">ESI report</a>
   <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}">Cash sheet / record cash paid</a>
   <a class="btn light" href="{{ url_for('export_cash', month=month) }}">Cash CSV</a>
   <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">All payslips</a>
@@ -33,6 +34,7 @@
   <div class="stat"><span>OT pay</span><b>{{ cur }}{{ totals.ot_pay|money }}</b></div>
   <div class="stat bad"><span>Deductions</span><b>{{ cur }}{{ totals.total_deductions|money }}</b></div>
   <div class="stat ok"><span>Net payable</span><b>{{ cur }}{{ totals.net|money }}</b></div>
+  <div class="stat"><span>ESI employer share</span><b>{{ cur }}{{ totals.esi_employer|money }}</b></div>
   <div class="stat"><span>By bank</span><b>{{ cur }}{{ totals.bank|money }}</b></div>
   <div class="stat warn"><span>In cash</span><b>{{ cur }}{{ totals.cash|money }}</b></div>
 </div>
@@ -49,7 +51,7 @@
     <td class="n">{{ s.get('cnt_MP',0)|days }}</td>{% set ed = s.get('edited', {}) %}<td class="n {{ 'edited' if ed.payable_days }}" title="{{ ('Edited by ' ~ s.edit_by ~ ': ' ~ s.edit_reason ~ ' (calculated ' ~ (s.calc_payable_days|days) ~ ')') if ed.payable_days }}"><b>{{ s.payable_days|days }}</b>{% if ed.payable_days %}<br><s class="small muted">{{ s.calc_payable_days|days }}</s>{% endif %}</td>
     <td class="n">{{ fmt_min(s.worked_min) }}</td><td class="n {{ 'edited' if ed.ot_min }}" title="{% if ed.ot_min %}Edited by {{ s.edit_by }}: {{ s.edit_reason }} (calculated {{ fmt_min(s.calc_ot_min) }}){% elif s.get('late_penalty_min') %}{{ fmt_min(s.ot_min_gross) }} earned − {{ fmt_min(s.late_penalty_min) }} late penalty{% endif %}">{{ p.ot_hours }}{% if ed.ot_min %}<br><s class="small muted">{{ '%.2f'|format(s.calc_ot_min / 60) }}</s>{% elif s.get('late_penalty_min') %}<span class="small muted">*</span>{% endif %}</td>
     <td class="n">{{ p.basic|money }}</td><td class="n">{{ p.ot_pay|money }}</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td><td class="n">{{ p.gross|money }}</td>
-    <td class="n">{{ p.pf|money }}</td><td class="n">{{ p.esi|money }}</td><td class="n">{{ (p.advance + p.tds + p.other_deduction)|money }}</td>
+    <td class="n">{{ p.pf|money }}</td><td class="n" title="{{ ('ESI wages ' ~ (p.get('esi_wages', 0)|money) ~ ', employer ' ~ (p.get('esi_employer', 0)|money) ~ ('; ' ~ p.esi_note if p.get('esi_note') else '')) }}">{{ p.esi|money }}</td><td class="n">{{ (p.advance + p.tds + p.other_deduction)|money }}</td>
     <td class="n"><b>{{ p.net|money }}</b></td>
     <td class="n {{ 'edited' if p.get('bank_override') }}" title="{{ p.get('pay_how', '') }}">{{ p.get('bank', p.net)|money }}</td>
     <td class="n {{ 'edited' if r.get('cash_diff') }}" title="{{ ('paid ' ~ (r.cash_paid.paid_amount|money) ~ ', difference ' ~ ('%+.2f'|format(r.cash_diff))) if r.get('cash_paid') else '' }}">{{ p.get('cash', 0)|money if p.get('cash') else '' }}{% if r.get('cash_paid') %} <span class="small">✓</span>{% endif %}</td>

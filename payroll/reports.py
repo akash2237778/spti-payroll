@@ -94,8 +94,14 @@ def calc_lines(row, settings, cur="₹"):
     lines.append(("Gross", " + ".join(g_parts), money(p["gross"], cur)))
     if p["pf"]:
         lines.append(("PF", f"{settings.get('pf_rate')}% × min({money(p['basic'], cur)}, {money(settings.get('pf_wage_ceiling'), cur)})", money(p["pf"], cur)))
-    if p["esi"]:
-        lines.append(("ESI", f"{settings.get('esi_rate')}% × {money(p['gross'], cur)}", money(p["esi"], cur)))
+    if p.get("esi_covered") or p["esi"]:
+        wages_txt = f"ESI wages {money(p.get('esi_wages', p['gross']), cur)}"
+        if p.get("ot_pay"):
+            wages_txt += " (gross − overtime, u/s 2(88))"
+        note = f"; {p['esi_note']}" if p.get("esi_note") else ""
+        lines.append(("ESI (employee)", f"{settings.get('esi_rate')}% × {wages_txt}, rounded up{note}", money(p["esi"], cur)))
+        lines.append(("ESI (employer, not deducted)", f"{settings.get('esi_employer_rate', '3.25')}% × ESI wages, rounded up",
+                      money(p.get("esi_employer", 0), cur)))
     for k, label in (("advance", "Advance recovery"), ("tds", "TDS"), ("other_deduction", "Other deduction")):
         if p[k]:
             lines.append((label, "", money(p[k], cur)))
@@ -157,7 +163,9 @@ def build_workbook(rows, month, settings, company=""):
         ("PF employee %", float(settings.get("pf_rate") or 0), "pf_rate"),
         ("PF wage ceiling", float(settings.get("pf_wage_ceiling") or 0), "pf_ceil"),
         ("ESI employee %", float(settings.get("esi_rate") or 0), "esi_rate"),
-        ("ESI applies if gross ≤", float(settings.get("esi_gross_ceiling") or 0), "esi_ceil"),
+        ("ESI ceiling: covered if ESI wages ≤ (checked per contribution period)", float(settings.get("esi_gross_ceiling") or 0), "esi_ceil"),
+        ("ESI employer %", float(settings.get("esi_employer_rate") or 3.25), "esi_er_rate"),
+        ("ESI: no employee share if average daily wage ≤", float(settings.get("esi_low_wage_daily") or 176), "esi_low"),
         ("Late marks per ½-day deduction (0 = off)", int(settings.get("late_marks_per_halfday") or 0), "late_half"),
     ]
     rules["A1"] = f"{company} payroll rules used for {month}"
@@ -183,7 +191,8 @@ def build_workbook(rows, month, settings, company=""):
             ("Payable days", "payable"), ("Worked hrs", "worked_h"), ("OT hrs (net)", "ot_h"), ("Per day", "per_day"),
             ("Hour rate", "hour_rate"), ("Basic", "basic"), ("OT pay", "ot_pay"), ("Allowance", "allow"), ("Bonus", "bonus"),
             ("Gross", "gross"), ("PF", "pf"), ("ESI", "esi"), ("Advance", "adv"), ("TDS", "tds"), ("Other ded.", "oth"),
-            ("Total ded.", "ded"), ("Net pay", "net"), ("By bank", "bank"), ("Cash", "cash")]
+            ("Total ded.", "ded"), ("Net pay", "net"), ("By bank", "bank"), ("Cash", "cash"),
+            ("ESI wages", "esi_w"), ("ESI employer", "esi_er")]
     pay_ws["A1"] = f"{company} payroll register {month} — every figure links to the employee's sheet"
     pay_ws["A1"].font = Font(bold=True, size=13)
     _hdr(pay_ws, 3, [c[0] for c in cols])
@@ -228,7 +237,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
     params = [("Salary type", p["salary_type"]), ("Rate", p["rate"]), ("Month divisor (days)", p["divisor"]),
               ("Standard shift hours", round(s["std_min"] / 60, 4)), ("OT eligible (1/0)", 1 if e.get("ot_enabled", 1) and e.get("category") != "staff" else 0),
               ("OT multiplier", float(e.get("ot_multiplier") or 1)), ("PF (1/0)", 1 if e.get("pf_enabled") else 0),
-              ("ESI (1/0)", 1 if e.get("esi_enabled") else 0), ("Weekly off paid (1/0)", wo_paid),
+              ("ESI covered this month (1/0, decided per contribution period)", 1 if p.get("esi_covered") else 0), ("Weekly off paid (1/0)", wo_paid),
               ("Paid lunch break (1/0)", 1 if e.get("paid_break") else 0)]
     P = {}
     for i, (label, val) in enumerate(params, 3):
@@ -238,7 +247,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
         P[label] = f"$B${i}"
     T, BA, BR = P["Salary type"], P["Rate"], P["Month divisor (days)"]
     STD, OTE, OTM, PFE, ESE, WOP = (P["Standard shift hours"], P["OT eligible (1/0)"], P["OT multiplier"], P["PF (1/0)"],
-                                    P["ESI (1/0)"], P["Weekly off paid (1/0)"])
+                                    P["ESI covered this month (1/0, decided per contribution period)"], P["Weekly off paid (1/0)"])
     PB = P["Paid lunch break (1/0)"]
     paid_break = bool(e.get("paid_break"))
 
@@ -360,7 +369,10 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ("Bonus / incentive", p["bonus"], "bonus"),
         ("GROSS", "={basic}+{ot_pay}+{allow}+{bonus}", "gross"),
         ("PF", f"=IF({PFE}=1,MIN({{basic}},{R['pf_ceil']})*{R['pf_rate']}/100,0)", "pf"),
-        ("ESI", f"=IF(AND({ESE}=1,{{gross}}<={R['esi_ceil']}),{{gross}}*{R['esi_rate']}/100,0)", "esi"),
+        ("ESI wages u/s 2(88) (gross − OT, + OT above half of gross)", "=IF({gross}>0,{gross}-{ot_pay}+MAX(0,{ot_pay}-{gross}/2),0)", "esi_w"),
+        ("ESI", f"=IF(AND({ESE}=1,{{esi_w}}>0),IF(AND({{payable}}>0,{{esi_w}}/{{payable}}<={R['esi_low']}),0,"
+                f"ROUNDUP(ROUND({{esi_w}}*{R['esi_rate']}/100,6),0)),0)", "esi"),
+        ("ESI employer (not deducted)", f"=IF(AND({ESE}=1,{{esi_w}}>0),ROUNDUP(ROUND({{esi_w}}*{R['esi_er_rate']}/100,6),0),0)", "esi_er"),
         ("Advance recovery", p["advance"], "adv"),
         ("TDS", p["tds"], "tds"),
         ("Other deduction", p["other_deduction"], "oth"),
@@ -387,7 +399,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
             ws.cell(row=r, column=1).font = BOLD
             c.font = BOLD
         if key in ("per_day", "hour_rate", "basic", "ot_pay", "allow", "bonus", "gross", "pf", "esi", "adv", "tds", "oth", "ded", "net",
-                   "bank_target", "bank", "cash"):
+                   "bank_target", "bank", "cash", "esi_w", "esi_er"):
             c.number_format = "#,##0.00"
     widths = {"A": 36, "B": 14, "C": 9, "D": 7, "E": 14, "F": 14, "Q": 30}
     for i in range(1, 26):

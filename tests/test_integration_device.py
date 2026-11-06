@@ -596,3 +596,27 @@ def test_end_to_end(client):
     assert c.get("/payroll/cash?month=2026-10").status_code == 403
     assert post(c, f"/employees/{kam}/cash_paid", month="2026-10", paid_amount="1").status_code == 403
     login_as("admin", "secret123")
+
+    # 17. ESIC: coverage decided per contribution period (Apr-Sep), ESI report and ESIC upload CSV
+    with db.tx() as conn:
+        e17 = conn.execute("SELECT id FROM employees WHERE device_user_id='2'").fetchone()["id"]
+        conn.execute("UPDATE employees SET salary_rate=20000, salary_type='monthly', category='worker', esi_no='1234567890' WHERE id=?", (e17,))
+    post(c, "/payroll?month=2026-04", action="finalize")                 # April frozen: covered at 20,000
+    with db.tx() as conn:
+        conn.execute("UPDATE employees SET salary_rate=40000 WHERE id=?", (e17,))
+        may = pr.compute_month(conn, "2026-05", employee_ids={e17})[0]["pay"]
+        octo = pr.compute_month(conn, "2026-10", employee_ids={e17})[0]["pay"]
+    assert may["esi_wages"] > 21000 and may["esi_covered"] and may["esi"] > 0, may      # continues to end of period
+    assert "start of the contribution period" in may["esi_note"]
+    assert not octo["esi_covered"] and octo["esi"] == 0                                 # new period: out of coverage
+    post(c, "/payroll?month=2026-04", action="reopen")
+    with db.tx() as conn:
+        conn.execute("UPDATE employees SET salary_rate=15000 WHERE id=?", (e17,))
+    rep = c.get("/reports/esi?month=2026-10").data.decode()
+    assert "Total to deposit" in rep and "1234567890" in rep and "15 Nov 2026" in rep
+    mc = c.get("/export/esic_mc.csv?month=2026-10").data.decode()
+    assert "IP Number (10 Digits)" in mc and "1234567890" in mc
+    assert "ESI employer share" in c.get("/payroll?month=2026-10").data.decode()
+    login_as("hr1", "hrpass123")
+    assert c.get("/reports/esi?month=2026-10").status_code == 403
+    login_as("admin", "secret123")

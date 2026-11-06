@@ -63,6 +63,12 @@ Corrections are made on **punches**, not days. Pairing is recomputed every time,
   the full balance, one instalment or any amount (never more than the balance or that month's pay). The balance carries over.
 - **Staff**: paid on payable days only, overtime never paid. Workers are paid overtime.
 
+- **ESI (ESIC)**: wages u/s 2(88) of the Code on Social Security, 2020 (ESIC from 21 Nov 2025): gross minus overtime,
+  with excluded items above half of total pay added back. Covered if ESI wages ≤ ₹21,000 (₹25,000 for a person with
+  disability), decided per contribution period (Apr–Sep, Oct–Mar) and continued to its end. Employee 0.75% and employer
+  3.25%, each rounded up to the rupee; no employee share at an average daily wage ≤ ₹176. Applies to every employee by
+  default (covered establishment). Payroll → ESI report shows both shares and exports the ESIC monthly upload CSV.
+
 ## How hours and pay are calculated
 
 | Rule | Default (editable) |
@@ -77,7 +83,7 @@ Corrections are made on **punches**, not days. Pairing is recomputed every time,
 | Work on weekly off / holiday | paid as an extra day (or all hours as OT; see Settings) |
 | Missing punch | counts as half day until corrected |
 | Monthly salary | rate ÷ days in month × payable days |
-| PF / ESI | 12% of basic (capped at ₹15,000) / 0.75% of gross if gross ≤ ₹21,000, only for employees with PF/ESI ticked |
+| PF / ESI | PF 12% of basic (capped at ₹15,000) for employees with PF ticked; ESI as described above |
 
 Payable days = full days + ½ half days + paid weekly offs + paid holidays + paid leave + extra days worked on offs − late-mark deductions (off by default).
 

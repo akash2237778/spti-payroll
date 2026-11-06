@@ -2,6 +2,7 @@
 import calendar
 import datetime as dt
 import json
+import math
 from decimal import Decimal, ROUND_HALF_UP
 
 from . import db, engine
@@ -41,7 +42,70 @@ def split_bank_cash(emp, net, bank_override=None):
     return bank, float(net) - bank, how
 
 
-def calculate(emp, summary, month, settings, adjustments=(), bank_override=None):
+def esi_applicable(emp, settings):
+    """Covered establishment (default): ESI applies to every employee; 'ticked' mode: only ticked employees."""
+    return settings.get("esi_mode", "all") != "ticked" or bool(emp.get("esi_enabled"))
+
+
+def esi_ceiling(emp, settings):
+    if emp.get("disabled_person"):
+        return float(settings.get("esi_disabled_ceiling") or 25000)
+    return float(settings.get("esi_gross_ceiling") or 21000)
+
+
+def esi_wages(basic, ot_pay, allowance=0.0, bonus=0.0):
+    """Wages u/s 2(88) Code on Social Security 2020 for this payroll: total remuneration minus overtime allowance
+    (an excluded head), except that excluded heads above one-half of total remuneration are added back."""
+    total = basic + ot_pay + allowance + bonus
+    excluded = ot_pay
+    return total - excluded + max(0.0, excluded - total / 2)
+
+
+def round_up(x):
+    """ESIC: each contribution is rounded to the next higher rupee."""
+    return float(math.ceil(round(x, 6)))
+
+
+def contribution_period(month):
+    """ESIC contribution periods: April-September and October-March. Returns the period's first month."""
+    y, m = map(int, month.split("-"))
+    if 4 <= m <= 9:
+        return f"{y}-04"
+    return f"{y if m >= 10 else y - 1}-10"
+
+
+def esi_contribution(emp, settings, *, basic, ot_pay, allowance=0.0, bonus=0.0, payable_days=0, covered=None):
+    """Employee and employer ESI for one month.
+    covered=None decides coverage on this month's wages; True/False is the contribution-period decision
+    (once covered in a period, contributions continue to its end even if wages rise above the ceiling)."""
+    out = {"esi": 0.0, "esi_employer": 0.0, "esi_wages": 0.0, "esi_covered": False, "esi_note": ""}
+    if not esi_applicable(emp, settings):
+        out["esi_note"] = "ESI not applicable"
+        return out
+    wages = esi_wages(basic, ot_pay, allowance, bonus)
+    out["esi_wages"] = r2(wages)
+    within = wages <= esi_ceiling(emp, settings)
+    is_covered = within if covered is None else bool(covered or within)
+    out["esi_covered"] = is_covered
+    if not is_covered:
+        out["esi_note"] = f"ESI wages above {esi_ceiling(emp, settings):,.0f}: not covered this period"
+        return out
+    if wages <= 0:
+        out["esi_note"] = "no wages this month"
+        return out
+    if not within:
+        out["esi_note"] = "covered from the start of the contribution period"
+    out["esi_employer"] = round_up(wages * float(settings.get("esi_employer_rate") or 3.25) / 100)
+    daily = wages / payable_days if payable_days else 0
+    if payable_days and daily <= float(settings.get("esi_low_wage_daily") or 176):
+        out["esi_note"] = (out["esi_note"] + "; " if out["esi_note"] else "") + \
+            f"average daily wage {daily:,.2f} ≤ {float(settings.get('esi_low_wage_daily') or 176):g}: no employee share"
+        return out
+    out["esi"] = round_up(wages * float(settings.get("esi_rate") or 0.75) / 100)
+    return out
+
+
+def calculate(emp, summary, month, settings, adjustments=(), bank_override=None, esi_covered=None):
     """Pure salary calculation for one employee-month. Returns a dict of line items."""
     y, m = map(int, month.split("-"))
     cal_days = calendar.monthrange(y, m)[1]
@@ -86,9 +150,9 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None)
     pf = 0.0
     if emp["pf_enabled"]:
         pf = min(basic, float(settings.get("pf_wage_ceiling") or 15000)) * float(settings.get("pf_rate") or 12) / 100
-    esi = 0.0
-    if emp["esi_enabled"] and gross <= float(settings.get("esi_gross_ceiling") or 21000):
-        esi = gross * float(settings.get("esi_rate") or 0.75) / 100
+    esi_info = esi_contribution(emp, settings, basic=basic, ot_pay=ot_pay, allowance=earn_adj["allowance"],
+                                bonus=earn_adj["bonus"], payable_days=payable, covered=esi_covered)
+    esi = esi_info["esi"]
 
     total_ded = pf + esi + sum(ded_adj.values())
     net = gross - total_ded
@@ -104,12 +168,15 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None)
         "std_hours": r2(std_hours), "category": "staff" if is_staff else "worker",
         **dict(zip(("bank", "cash", "pay_how"), split_bank_cash(emp, round_half_up(net), bank_override))),
         "bank_override": bank_override is not None,
+        "esi_wages": esi_info["esi_wages"], "esi_employer": esi_info["esi_employer"],
+        "esi_covered": esi_info["esi_covered"], "esi_note": esi_info["esi_note"],
     }
 
 
-def compute_month(conn, month, employee_ids=None, settings=None, today=None):
+def compute_month(conn, month, employee_ids=None, settings=None, today=None, _esi_cache=None):
     """Attendance + salary for all (active-in-month) employees. Returns list of rows."""
     settings = settings or db.get_settings(conn)
+    _esi_cache = {} if _esi_cache is None else _esi_cache
     start, end = engine.month_range(month)
     q = """SELECT * FROM employees WHERE (join_date IS NULL OR join_date <= ?)
            AND (exit_date IS NULL OR exit_date = '' OR exit_date >= ?)"""
@@ -132,8 +199,36 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None):
         if not e["active"] and summary["worked_min"] == 0 and not adjs.get(e["id"]):
             continue
         pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]))
+        if (not pay["esi_covered"] and esi_applicable(e, settings) and pay["esi_wages"] > 0
+                and esi_covered_earlier_in_period(conn, e["id"], month, settings, _esi_cache)):
+            pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]), esi_covered=True)
         rows.append({"emp": e, "days": d["days"], "shift": d["shift"], "summary": summary, "pay": pay})
     return rows
+
+
+def esi_covered_earlier_in_period(conn, eid, month, settings, cache=None):
+    """True if the employee was ESI-covered in an earlier month of the same contribution period
+    (finalized months use their frozen figures)."""
+    cache = {} if cache is None else cache
+    start = contribution_period(month)
+    m = start
+    while m < month:
+        key = (eid, m)
+        if key not in cache:
+            run = conn.execute("SELECT id, status FROM payroll_runs WHERE month = ?", (m,)).fetchone()
+            item = None
+            if run and run["status"] == "final":
+                item = conn.execute("SELECT details FROM payroll_items WHERE run_id = ? AND employee_id = ?", (run["id"], eid)).fetchone()
+            if item:
+                cache[key] = bool(json.loads(item["details"])["pay"].get("esi_covered"))
+            else:
+                rows = compute_month(conn, m, employee_ids={eid}, settings=settings, _esi_cache=cache)
+                cache[key] = bool(rows and rows[0]["pay"]["esi_covered"])
+        if cache[key]:
+            return True
+        y, mo = map(int, m.split("-"))
+        m = f"{y + (mo == 12)}-{1 if mo == 12 else mo + 1:02d}"
+    return False
 
 
 def month_overrides(conn, month):

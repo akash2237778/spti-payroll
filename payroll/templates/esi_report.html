@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav %}
+{% block title %}ESI {{ month }}{% endblock %}
+{% block body %}
+<h1>ESI contributions {{ monthnav('esi_report', month, prev, nxt) }}
+  <a class="btn light small noprint" href="{{ url_for('export_esic_mc', month=month) }}">ESIC upload CSV</a>
+  <button class="light small noprint" onclick="window.print()">Print</button></h1>
+<p class="muted">Wages u/s 2(88) of the Code on Social Security, 2020 (ESIC, w.e.f. 21 Nov 2025): gross pay minus overtime allowance,
+with excluded items above half of total pay added back. Covered if ESI wages ≤ {{ cur }}{{ settings.esi_gross_ceiling }}
+({{ cur }}{{ settings.esi_disabled_ceiling }} for a person with disability), decided per contribution period
+(this month is in the period starting {{ period }}); once covered, contributions continue to the end of the period.
+Employee {{ settings.esi_rate }}% and employer {{ settings.esi_employer_rate }}%, each rounded up to the next rupee; no employee share when the
+average daily wage is ≤ {{ cur }}{{ settings.esi_low_wage_daily }}. <b>Pay by {{ due.strftime('%d %b %Y') }}.</b></p>
+<div class="stats">
+  <div class="stat"><span>Covered employees</span><b>{{ covered|length }}</b></div>
+  <div class="stat"><span>ESI wages</span><b>{{ cur }}{{ tot.esi_wages|money }}</b></div>
+  <div class="stat"><span>Employee share</span><b>{{ cur }}{{ tot.esi|money }}</b></div>
+  <div class="stat"><span>Employer share</span><b>{{ cur }}{{ tot.esi_employer|money }}</b></div>
+  <div class="stat ok"><span>Total to deposit</span><b>{{ cur }}{{ (tot.esi + tot.esi_employer)|money }}</b></div>
+</div>
+<div class="scroll"><table>
+  <tr><th>Emp ID</th><th>Name</th><th>IP number</th><th class="n">Days paid</th><th class="n">Gross</th><th class="n">Overtime</th>
+    <th class="n">ESI wages</th><th class="n">Employee</th><th class="n">Employer</th><th class="n">Total</th><th>Note</th></tr>
+  {% for r in covered %}{% set p = r.pay %}
+  <tr><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td>
+    <td>{% if r.emp.esi_no %}{{ r.emp.esi_no }}{% else %}<span class="badge bad">missing</span>{% endif %}</td>
+    <td class="n">{{ r.summary.payable_days|days }}</td><td class="n">{{ p.gross|money }}</td><td class="n">{{ p.ot_pay|money }}</td>
+    <td class="n"><b>{{ p.esi_wages|money }}</b></td><td class="n">{{ p.esi|money }}</td><td class="n">{{ p.esi_employer|money }}</td>
+    <td class="n">{{ (p.esi + p.esi_employer)|money }}</td><td class="small">{{ p.esi_note }}</td></tr>
+  {% else %}<tr><td colspan="11" class="muted">No ESI-covered employees in {{ month }}{{ ' - salaries are not entered yet' if not covered and not out }}.</td></tr>{% endfor %}
+  {% if covered %}<tr><th colspan="6">Total</th><th class="n">{{ tot.esi_wages|money }}</th><th class="n">{{ tot.esi|money }}</th>
+    <th class="n">{{ tot.esi_employer|money }}</th><th class="n">{{ (tot.esi + tot.esi_employer)|money }}</th><th></th></tr>{% endif %}
+</table></div>
+{% if out %}
+<h2>Not covered this contribution period</h2>
+<table>
+  <tr><th>Emp ID</th><th>Name</th><th class="n">ESI wages</th><th>Reason</th></tr>
+  {% for r in out %}<tr><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td><td class="n">{{ r.pay.esi_wages|money }}</td><td class="small">{{ r.pay.esi_note }}</td></tr>{% endfor %}
+</table>
+{% endif %}
+<p class="small muted">Missing IP numbers: enter them on the employee profile (Bank &amp; statutory → ESI number). The upload CSV follows the ESIC portal's
+monthly contribution columns; fill "Reason Code" for anyone with zero days before uploading.</p>
+{% endblock %}
