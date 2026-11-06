@@ -2,7 +2,7 @@
 {% block title %}{{ emp.name }} {{ month }}{% endblock %}
 {% block body %}
 {% set s = row.summary %}{% set p = row.pay %}
-<h1>{{ emp.name }} <span class="muted small">#{{ emp.device_user_id }} · {{ row.shift.name }} {{ row.shift.start_time }}-{{ row.shift.end_time }}</span>
+<h1>{{ emp.name }} {% if emp.category == 'staff' %}<span class="badge">Staff</span>{% endif %} <span class="muted small">#{{ emp.device_user_id }} · {{ row.shift.name }} {{ row.shift.start_time }}-{{ row.shift.end_time }}</span>
   <a class="btn small noprint" href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">⇄ Change shift</a>
   <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month, eid=emp.id) }}" target="_blank">🖨 Print statement</a>
   {% if can_pay %}<a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month, eid=emp.id) }}">Excel with formulas</a>{% endif %}
@@ -142,19 +142,42 @@
   </form>
 </div>
 {% if can_pay %}
-<div class="card" style="margin-top:14px"><h2>Salary preview ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>
-  <table style="max-width:560px">
-    <tr><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
+<div class="card" style="margin-top:14px" id="salary">
+  <h2 style="margin-top:0">Salary {{ '· Staff' if p.category == 'staff' }} ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>
+  <div class="row" style="align-items:flex-start">
+  <table style="max-width:520px" class="grow">
+    <tr class="{{ 'edited' if s.get('edited', {}).payable_days }}"><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
     <tr><td>Per day / per hour</td><td class="n">{{ cur }}{{ p.per_day|money }} / {{ cur }}{{ p.hour_rate|money }}</td></tr>
     <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td></tr>
-    <tr><td>OT ({{ p.ot_hours }} h)</td><td class="n">{{ p.ot_pay|money }}</td></tr>
+    <tr><td>OT ({{ p.ot_hours }} h){% if p.category == 'staff' %} <span class="small muted">staff: {{ fmt_min(s.ot_min) }} worked, not paid</span>{% endif %}</td><td class="n">{{ p.ot_pay|money }}</td></tr>
     <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
     <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
     <tr><td>PF / ESI</td><td class="n">{{ p.pf|money }} / {{ p.esi|money }}</td></tr>
     <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
     <tr><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
   </table>
-  {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee. <a href="{{ url_for('employee_edit', eid=emp.id) }}">Set it here.</a></p>{% endif %}
+  <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
+    <input type="hidden" name="back" value="{{ request.full_path }}#salary">
+    <b>Edit salary</b>
+    <div class="form-grid" style="margin-top:8px">
+      <div><label>Category</label><select name="category">
+        <option value="worker" {{ 'selected' if (emp.category or 'worker') == 'worker' }}>Worker – overtime paid</option>
+        <option value="staff" {{ 'selected' if emp.category == 'staff' }}>Staff – payable days only, no OT</option></select></div>
+      <div><label>Salary type</label><select name="salary_type">
+        {% for k, l in [('monthly','Monthly'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == emp.salary_type }}>{{ l }}</option>{% endfor %}</select></div>
+      <div><label>Rate ({{ cur }})</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ emp.salary_rate or 0 }}" required></div>
+      <div><label>OT multiplier</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ emp.ot_multiplier or 1 }}"></div>
+    </div>
+    <div style="margin-top:6px">
+      <label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if emp.ot_enabled }}> OT eligible</label>
+      <label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if emp.pf_enabled }}> PF</label>
+      <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if emp.esi_enabled }}> ESI</label>
+    </div>
+    <p class="small muted" style="margin:6px 0">Saved on the employee's profile: applies to every month whose payroll is not finalized{{ ' (this month is finalized, so it keeps its frozen amounts)' if locked }}.</p>
+    <button>Save salary</button>
+  </form>
+  </div>
+  {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
 </div>
 {% endif %}
 {% endblock %}

@@ -18,7 +18,10 @@
 </div></div>
 <div class="card"><h2>{{ "Shift &amp; salary" if can_pay else "Shift &amp; working time" }}</h2><div class="form-grid">
   <div><label>Default shift</label><select name="shift_id">{% for s in shifts %}<option value="{{ s.id }}" {{ 'selected' if s.id == e.shift_id }}>{{ s.name }} ({{ s.start_time }}-{{ s.end_time }})</option>{% endfor %}</select></div>
-  {% if can_pay %}  <div><label>Salary type</label><select name="salary_type">
+  {% if can_pay %}  <div><label>Category</label><select name="category">
+    <option value="worker" {{ 'selected' if (e.category or 'worker') == 'worker' }}>Worker – overtime paid</option>
+    <option value="staff" {{ 'selected' if e.category == 'staff' }}>Staff – payable days only, no OT</option></select></div>
+  <div><label>Salary type</label><select name="salary_type">
     {% for k, l in [('monthly','Monthly (fixed per month)'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == (e.salary_type or 'monthly') }}>{{ l }}</option>{% endfor %}</select></div>
   <div><label>Rate ({{ cur }} per month / day / hour)</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ e.salary_rate or 0 }}"></div>
   <div><label>OT multiplier (1 = normal hourly rate, 2 = double)</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier or 1 }}"></div>{% endif %}

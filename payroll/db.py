@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS employees (
     salary_type TEXT DEFAULT 'monthly',    -- monthly | daily | hourly
     salary_rate REAL DEFAULT 0,
     ot_enabled INTEGER DEFAULT 1, ot_multiplier REAL DEFAULT 1.0,
+    category TEXT DEFAULT 'worker',        -- worker: OT paid | staff: no OT, salary by payable days only
     paid_break INTEGER DEFAULT 0,          -- 1 = lunch break is paid time (not deducted)
     weekly_off TEXT DEFAULT '6',           -- python weekday numbers, Mon=0 .. Sun=6
     pf_enabled INTEGER DEFAULT 0, esi_enabled INTEGER DEFAULT 0,
@@ -162,7 +163,8 @@ def init_db():
                                 ("employees", "paid_break", "INTEGER DEFAULT 0"),
                                 # who/when a punch was added or re-roled by a person (machine punches stay NULL)
                                 ("punches", "changed_by", "TEXT"), ("punches", "changed_at", "TEXT"),
-                                ("leaves", "created_by", "TEXT"), ("leaves", "created_at", "TEXT")):
+                                ("leaves", "created_by", "TEXT"), ("leaves", "created_at", "TEXT"),
+                                ("employees", "category", "TEXT DEFAULT 'worker'")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

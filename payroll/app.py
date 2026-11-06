@@ -134,7 +134,7 @@ ROLES = {"admin": "Admin - everything", "hr": "HR - attendance, no salaries", "v
 PAY_ROLES = {"admin"}
 EDIT_ROLES = {"admin", "hr"}
 # Employee fields only someone who may see pay can read or change.
-PAY_FIELDS = ["salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled",
+PAY_FIELDS = ["category", "salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled",
               "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"]
 
 
@@ -367,7 +367,7 @@ def device_action(did, action):
 # ------------------------------------------------------------------ employees
 
 EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
-              "shift_id", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
+              "shift_id", "category", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
               "esi_no", "notes"]
 EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break"]
 
@@ -401,15 +401,17 @@ def employee_quick(eid):
             flash("Rate and OT multiplier must be numbers", "error")
             return redirect(request.referrer or url_for("employees"))
         ot_on = 1 if f.get("ot_enabled") else 0
+        category = f.get("category") if f.get("category") in ("worker", "staff") else (emp["category"] or "worker")
     else:  # HR / viewer: pay fields are neither shown nor changeable
         stype, rate, mult, ot_on = emp["salary_type"], emp["salary_rate"], emp["ot_multiplier"], emp["ot_enabled"]
+        category = emp["category"] or "worker"
     vals = (name, f.get("department", "").strip(), f.get("designation", "").strip(), int(f.get("shift_id") or 0) or None,
-            stype, rate, ot_on, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, eid)
+            stype, rate, ot_on, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, category, eid)
     g.conn.execute("""UPDATE employees SET name=?, department=?, designation=?, shift_id=?, salary_type=?, salary_rate=?,
-                      ot_enabled=?, ot_multiplier=?, active=?, paid_break=? WHERE id=?""", vals)
+                      ot_enabled=?, ot_multiplier=?, active=?, paid_break=?, category=? WHERE id=?""", vals)
     detail = {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "active": vals[8], "paid_break": vals[9]}
     if can_pay():
-        detail.update(type=stype, rate=rate, ot=ot_on, mult=mult)
+        detail.update(type=stype, rate=rate, ot=ot_on, mult=mult, category=category)
     audit("employee_quick_edit", detail)
     flash(f"Saved {name}", "ok")
     back = f.get("back", "")
@@ -432,6 +434,7 @@ def employee_edit(eid):
         vals["salary_rate"] = float(vals["salary_rate"] or 0)
         vals["ot_multiplier"] = float(vals["ot_multiplier"] or 1)
         vals["salary_type"] = vals["salary_type"] if vals["salary_type"] in ("monthly", "daily", "hourly") else "monthly"
+        vals["category"] = vals["category"] if vals["category"] in ("worker", "staff") else "worker"
         vals["shift_id"] = int(vals["shift_id"]) if vals["shift_id"] else None
         for k in EMP_FLAGS:
             vals[k] = 1 if f.get(k) else 0
@@ -501,6 +504,32 @@ def employee_shifts(eid):
     return redirect(f.get("back") or url_for("att_employee", eid=eid))
 
 
+@app.route("/employees/<int:eid>/salary", methods=["POST"])
+@pay_required
+def employee_salary(eid):
+    """Edit an employee's salary settings from the attendance page (applies to every month not yet finalized)."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    try:
+        rate = float(f.get("salary_rate") or 0)
+        mult = float(f.get("ot_multiplier") or 1)
+        if rate < 0 or mult < 0:
+            raise ValueError
+    except ValueError:
+        flash("Rate and OT multiplier must be positive numbers", "error")
+        return redirect(f.get("back") or url_for("att_employee", eid=eid))
+    vals = {"category": f.get("category") if f.get("category") in ("worker", "staff") else "worker",
+            "salary_type": f.get("salary_type") if f.get("salary_type") in ("monthly", "daily", "hourly") else "monthly",
+            "salary_rate": rate, "ot_enabled": 1 if f.get("ot_enabled") else 0, "ot_multiplier": mult,
+            "pf_enabled": 1 if f.get("pf_enabled") else 0, "esi_enabled": 1 if f.get("esi_enabled") else 0}
+    before = {k: emp[k] for k in vals}
+    g.conn.execute(f"UPDATE employees SET {', '.join(k + '=?' for k in vals)} WHERE id=?", list(vals.values()) + [eid])
+    audit("employee_salary_edit", {"id": eid, "name": emp["name"], "from": before, "to": vals})
+    flash(f"Salary settings for {emp['name']} saved; unfinalized months recalculated", "ok")
+    back = f.get("back", "")
+    return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid))
+
+
 @app.route("/employees/bulk", methods=["GET", "POST"])
 @pay_required
 def employees_bulk():
@@ -510,12 +539,13 @@ def employees_bulk():
         n = 0
         for eid in f.getlist("id"):
             g.conn.execute("""UPDATE employees SET department=?, salary_type=?, salary_rate=?, ot_enabled=?, ot_multiplier=?,
-                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=? WHERE id=?""",
+                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=?, category=? WHERE id=?""",
                            (f.get(f"department_{eid}", ""), f.get(f"salary_type_{eid}", "monthly"),
                             float(f.get(f"salary_rate_{eid}") or 0), 1 if f.get(f"ot_enabled_{eid}") else 0,
                             float(f.get(f"ot_multiplier_{eid}") or 1), 1 if f.get(f"pf_enabled_{eid}") else 0,
                             1 if f.get(f"esi_enabled_{eid}") else 0, int(f.get(f"shift_id_{eid}") or 0) or None,
-                            1 if f.get(f"paid_break_{eid}") else 0, int(eid)))
+                            1 if f.get(f"paid_break_{eid}") else 0,
+                            f.get(f"category_{eid}") if f.get(f"category_{eid}") in ("worker", "staff") else "worker", int(eid)))
             n += 1
         audit("employee_bulk_save", f"{n} employees")
         flash(f"Updated {n} employees", "ok")

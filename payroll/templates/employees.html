@@ -30,13 +30,14 @@
       <button form="{{ fid }}" class="small edit">Save</button>
       <button type="button" class="light small edit" onclick="qedit(this, false)">✕</button>{% endif %}</td>
     <td>{{ e.device_user_id }}</td>
-    <td><a class="view" href="{{ url_for('employee_edit', eid=e.id) }}">{{ e.name }}</a><input class="edit" form="{{ fid }}" name="name" value="{{ e.name }}" size="12"></td>
+    <td><a class="view" href="{{ url_for('employee_edit', eid=e.id) }}">{{ e.name }}</a>{% if e.category == 'staff' %} <span class="badge view">Staff</span>{% endif %}<input class="edit" form="{{ fid }}" name="name" value="{{ e.name }}" size="12"></td>
     <td><span class="view">{{ e.department }}</span><input class="edit" form="{{ fid }}" name="department" value="{{ e.department }}" size="9"></td>
     <td><span class="view">{{ e.designation }}</span><input class="edit" form="{{ fid }}" name="designation" value="{{ e.designation }}" size="9"></td>
     <td><span class="view">{{ e.shift_name or '-' }} {% if can_edit %}<a class="small" href="{{ url_for('employee_edit', eid=e.id) }}#shift-panel">roster</a>{% endif %}</span>
       <select class="edit" form="{{ fid }}" name="shift_id">{% for s in shifts %}<option value="{{ s.id }}" {{ 'selected' if s.id == e.shift_id }}>{{ s.name }}</option>{% endfor %}</select></td>
     {% if can_pay %}
     <td><span class="view">{{ e.salary_type }}</span>
+      <select class="edit" form="{{ fid }}" name="category"><option value="worker" {{ 'selected' if (e.category or 'worker') == 'worker' }}>worker</option><option value="staff" {{ 'selected' if e.category == 'staff' }}>staff</option></select>
       <select class="edit" form="{{ fid }}" name="salary_type">{% for k in ['monthly','daily','hourly'] %}<option {{ 'selected' if k == e.salary_type }}>{{ k }}</option>{% endfor %}</select></td>
     <td class="n"><span class="view">{% if e.salary_rate %}{{ cur }}{{ e.salary_rate|money }}{% else %}<span class="badge bad">not set</span>{% endif %}</span>
       <input class="edit" form="{{ fid }}" name="salary_rate" type="number" step="0.01" min="0" value="{{ e.salary_rate }}" style="width:95px"></td>

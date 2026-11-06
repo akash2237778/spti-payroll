@@ -511,3 +511,16 @@ def test_month_override_keeps_calculated_values():
 def test_parse_hours():
     from payroll.app import parse_hours
     assert parse_hours("95:30") == 5730 and parse_hours("95.5") == 5730 and parse_hours("2") == 120 and parse_hours("") is None
+
+
+# ---------------------------------------------------------------- staff: payable days only, no overtime pay
+
+def test_staff_paid_on_payable_days_only():
+    s = {"payable_days": 26, "std_min": 480, "worked_min": 0, "ot_min": 1200, "paid_off_days": 4}
+    worker = {"salary_type": "monthly", "salary_rate": 26000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0,
+              "esi_enabled": 0, "category": "worker"}
+    staff = dict(worker, category="staff")
+    pw, ps = payroll.calculate(worker, s, "2026-11", S), payroll.calculate(staff, s, "2026-11", S)   # Nov: 30 days
+    assert pw["ot_pay"] > 0 and ps["ot_pay"] == 0 and ps["ot_hours"] == 0
+    assert ps["basic"] == pw["basic"] == round(26000 / 30 * 26, 2) and ps["gross"] == ps["basic"] and ps["category"] == "staff"
+    assert payroll.calculate(dict(worker, category=None), s, "2026-11", S)["ot_pay"] == pw["ot_pay"]   # default = worker

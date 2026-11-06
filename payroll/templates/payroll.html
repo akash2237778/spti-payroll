@@ -39,7 +39,7 @@
   {% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}
   <tr>
     <td>{{ r.emp.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.name }}</a></td>
-    <td class="small">{{ p.salary_type }}</td><td class="n">{{ p.rate|money if p.rate else '—' }}</td>
+    <td class="small">{{ p.salary_type }}{% if p.get('category') == 'staff' %} <span class="badge">staff</span>{% endif %}</td><td class="n">{{ p.rate|money if p.rate else '—' }}</td>
     <td class="n">{{ s.get('cnt_P',0)|days }}</td><td class="n">{{ s.get('cnt_HD',0)|days }}</td><td class="n">{{ s.get('cnt_A',0)|days }}</td>
     <td class="n">{{ s.get('cnt_WO',0)|days }}</td><td class="n">{{ (s.get('cnt_WOP',0) + s.get('cnt_HP',0))|days }}</td><td class="n">{{ s.get('leave_credit',0)|days }}</td>
     <td class="n">{{ s.get('cnt_MP',0)|days }}</td>{% set ed = s.get('edited', {}) %}<td class="n {{ 'edited' if ed.payable_days }}" title="{{ ('Edited by ' ~ s.edit_by ~ ': ' ~ s.edit_reason ~ ' (calculated ' ~ (s.calc_payable_days|days) ~ ')') if ed.payable_days }}"><b>{{ s.payable_days|days }}</b>{% if ed.payable_days %}<br><s class="small muted">{{ s.calc_payable_days|days }}</s>{% endif %}</td>

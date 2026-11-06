@@ -84,7 +84,8 @@ def calc_lines(row, settings, cur="₹"):
     if ed.get("ot_min"):
         lines.append(("Overtime hours (edited)", f"set by {s.get('edit_by', '')}: {s.get('edit_reason', '')}", engine.fmt_min(s["ot_min"])))
     lines.append(("Overtime pay", f"{num(p['ot_hours'])} h × {money(p['hour_rate'], cur)} × {num(row['emp'].get('ot_multiplier') or 1)}"
-                  + ("" if row["emp"].get("ot_enabled", 1) else " (not OT eligible)"), money(p["ot_pay"], cur)))
+                  + (" (staff: overtime not paid)" if row["emp"].get("category") == "staff"
+                     else "" if row["emp"].get("ot_enabled", 1) else " (not OT eligible)"), money(p["ot_pay"], cur)))
     g_parts = [f"{money(p['basic'], cur)} basic", f"{money(p['ot_pay'], cur)} OT"]
     if p["allowance"]:
         g_parts.append(f"{money(p['allowance'], cur)} allowance")
@@ -221,7 +222,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
     ws["A1"] = f"{e['name']} (#{e['device_user_id']}) — attendance & salary {month}"
     ws["A1"].font = Font(bold=True, size=13)
     params = [("Salary type", p["salary_type"]), ("Rate", p["rate"]), ("Month divisor (days)", p["divisor"]),
-              ("Standard shift hours", round(s["std_min"] / 60, 4)), ("OT eligible (1/0)", 1 if e.get("ot_enabled", 1) else 0),
+              ("Standard shift hours", round(s["std_min"] / 60, 4)), ("OT eligible (1/0)", 1 if e.get("ot_enabled", 1) and e.get("category") != "staff" else 0),
               ("OT multiplier", float(e.get("ot_multiplier") or 1)), ("PF (1/0)", 1 if e.get("pf_enabled") else 0),
               ("ESI (1/0)", 1 if e.get("esi_enabled") else 0), ("Weekly off paid (1/0)", wo_paid),
               ("Paid lunch break (1/0)", 1 if e.get("paid_break") else 0)]

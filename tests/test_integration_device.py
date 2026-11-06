@@ -467,3 +467,26 @@ def test_end_to_end(client):
     login_as("viewer1", "viewer123")
     assert post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days="1", reason="x").status_code == 403
     login_as("admin", "secret123")
+
+    # 14. staff category + edit salary from the attendance page
+    pg = c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "Edit salary" in pg and 'name="category"' in pg
+    post(c, f"/employees/{kam}/salary", category="staff", salary_type="monthly", salary_rate="18000", ot_multiplier="1",
+         ot_enabled="on", back=f"/attendance/employee/{kam}?month=2026-10")
+    with db.tx() as conn:
+        e14 = conn.execute("SELECT category, salary_rate FROM employees WHERE id=?", (kam,)).fetchone()
+        r14 = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]
+        audit14 = conn.execute("SELECT detail FROM audit_log WHERE action='employee_salary_edit' ORDER BY id DESC").fetchone()
+    assert (e14["category"], e14["salary_rate"]) == ("staff", 18000) and audit14
+    assert r14["summary"]["ot_min"] > 0 and r14["pay"]["ot_pay"] == 0 and r14["pay"]["gross"] == r14["pay"]["basic"]
+    assert abs(r14["pay"]["basic"] - 18000 / 31 * r14["summary"]["payable_days"]) < 0.01
+    assert "staff: " in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    r = c.get(f"/export/payroll_formulas.xlsx?month=2026-10&eid={kam}")
+    p14 = os.path.join(tempfile.mkdtemp(), "s.xlsx"); open(p14, "wb").write(r.data)
+    x14 = ExcelCompiler(filename=p14)
+    assert x14.evaluate("Payroll!L4") == 0 and abs(x14.evaluate("Payroll!V4") - r14["pay"]["net"]) < 0.5
+    login_as("hr1", "hrpass123")
+    assert post(c, f"/employees/{kam}/salary", category="worker", salary_rate="1").status_code == 403
+    assert "Edit salary" not in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "Staff</span>" in c.get("/employees").data.decode()            # HR still sees who is staff
+    login_as("admin", "secret123")

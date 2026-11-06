@@ -43,7 +43,9 @@ def calculate(emp, summary, month, settings, adjustments=()):
         normal_hours = max(0.0, (summary["worked_min"] - summary.get("ot_min_gross", summary["ot_min"])) / 60.0)
         basic = rate * (normal_hours + summary["paid_off_days"] * std_hours)
 
-    ot_hours = summary["ot_min"] / 60.0 if emp["ot_enabled"] else 0.0
+    # Staff are paid on payable days only: overtime hours are recorded but never paid.
+    is_staff = (emp.get("category") or "worker") == "staff"
+    ot_hours = summary["ot_min"] / 60.0 if emp["ot_enabled"] and not is_staff else 0.0
     ot_pay = ot_hours * hour_rate * float(emp["ot_multiplier"] or 1.0)
 
     earn_adj = {k: 0.0 for k in ADJ_EARNINGS}
@@ -77,7 +79,7 @@ def calculate(emp, summary, month, settings, adjustments=()):
         "net": round_half_up(net), "adjustments": adj_lines,
         "ot_hours_gross": r2(summary.get("ot_min_gross", summary["ot_min"]) / 60.0),
         "late_penalty_hours": r2(summary.get("late_penalty_min", 0) / 60.0),
-        "std_hours": r2(std_hours),
+        "std_hours": r2(std_hours), "category": "staff" if is_staff else "worker",
     }
 
 
