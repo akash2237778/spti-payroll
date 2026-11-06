@@ -620,3 +620,25 @@ def test_end_to_end(client):
     login_as("hr1", "hrpass123")
     assert c.get("/reports/esi?month=2026-10").status_code == 403
     login_as("admin", "secret123")
+
+    # 18. salary components on: ESI wages leave out HRA + conveyance; Excel formulas agree
+    post(c, "/settings", action="settings", salary_components="on")
+    post(c, f"/employees/{kam}/split", month="2026-10", action="reset")   # earlier test set a one-month bank amount
+    post(c, f"/employees/{kam}/salary", category="worker", salary_type="monthly", salary_rate="30000", ot_multiplier="1",
+         ot_enabled="on", pay_mode="esi", comp_hra="10000", comp_conveyance="5000", comp_other="0")
+    with db.tx() as conn:
+        e18 = conn.execute("SELECT comp_hra, comp_conveyance, pay_mode FROM employees WHERE id=?", (kam,)).fetchone()
+        p18 = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert tuple(e18) == (10000, 5000, "esi") and p18["components"]
+    assert abs(p18["hra"] - p18["basic"] / 3) < 0.02 and p18["esi_wages"] < p18["gross"] - p18["ot_pay"]
+    assert p18["bank"] == min(round(p18["esi_wages"]), p18["net"]) and p18["cash"] == p18["net"] - p18["bank"]
+    pg18 = c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "Salary components" in pg18 and "Basic + DA" in pg18
+    r = c.get(f"/export/payroll_formulas.xlsx?month=2026-10&eid={kam}")
+    p18x = os.path.join(tempfile.mkdtemp(), "c.xlsx"); open(p18x, "wb").write(r.data)
+    x18 = ExcelCompiler(filename=p18x)
+    for col, key in (("Q", "esi"), ("P", "pf"), ("V", "net"), ("W", "bank"), ("X", "cash"), ("Y", "esi_wages")):
+        assert abs(x18.evaluate(f"Payroll!{col}4") - p18[key]) < 0.5, (key, x18.evaluate(f"Payroll!{col}4"), p18[key])
+    r = post(c, f"/employees/{kam}/salary", salary_rate="30000", comp_hra="40000", category="worker", salary_type="monthly")
+    assert "cannot be more than the salary rate" in r.data.decode()
+    post(c, "/settings", action="settings")                               # components off again

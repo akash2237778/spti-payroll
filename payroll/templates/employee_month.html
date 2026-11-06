@@ -149,6 +149,8 @@
     <tr class="{{ 'edited' if s.get('edited', {}).payable_days }}"><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
     <tr><td>Per day / per hour</td><td class="n">{{ cur }}{{ p.per_day|money }} / {{ cur }}{{ p.hour_rate|money }}</td></tr>
     <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td></tr>
+    {% if p.get('components') %}<tr><td class="small muted" colspan="2" style="padding-left:18px">Basic + DA {{ p.basic_da|money }} · HRA {{ p.hra|money }} · Conveyance {{ p.conveyance|money }} · Other {{ p.other_allowance|money }}</td></tr>{% endif %}
+    <tr><td>ESI wages <span class="small muted">(for ESI)</span></td><td class="n">{{ p.get('esi_wages', 0)|money }}</td></tr>
     <tr><td>OT ({{ p.ot_hours }} h){% if p.category == 'staff' %} <span class="small muted">staff: {{ fmt_min(s.ot_min) }} worked, not paid</span>{% endif %}</td><td class="n">{{ p.ot_pay|money }}</td></tr>
     <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
     <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
@@ -179,6 +181,7 @@
       <div><label>Salary paid (default)</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (emp.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>
       <div><label>Bank amount ({{ cur }}) or %</label><input name="bank_value" type="number" step="0.01" min="0" value="{{ emp.bank_value or 0 }}"></div>
     </div>
+    {% set src = emp %}{% set rate_name = 'salary_rate' %}{% include "_components.html" %}
     <p class="small muted" style="margin:6px 0">Saved on the employee's profile: applies to every month whose payroll is not finalized{{ ' (this month is finalized, so it keeps its frozen amounts)' if locked }}.</p>
     <button>Save salary</button>
   </form>

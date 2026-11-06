@@ -33,6 +33,7 @@
     {% if can_pay %}<label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if e.pf_enabled }}> PF</label>
     <label class="chk" title="Only used when Settings → ESI applies to: ticked employees only"><input type="checkbox" name="esi_enabled" {{ 'checked' if e.esi_enabled }}> ESI</label>
     <label class="chk" title="ESI ceiling 25,000 instead of 21,000"><input type="checkbox" name="disabled_person" {{ 'checked' if e.disabled_person }}> Person with disability</label>{% endif %}</div>
+  {% if can_pay %}{% set src = e %}{% set rate_name = 'salary_rate' %}{% include "_components.html" %}{% endif %}
 </div></div>
 {% if can_pay %}<div class="card"><h2>Bank &amp; statutory</h2><div class="form-grid">
   <div><label>Salary paid</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (e.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>

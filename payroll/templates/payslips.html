@@ -20,7 +20,13 @@
   </table>
   <table>
     <tr><th>Earnings</th><th class="n">{{ cur }}</th><th>Deductions</th><th class="n">{{ cur }}</th></tr>
-    <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td><td>Provident fund</td><td class="n">{{ p.pf|money }}</td></tr>
+    {% if p.get('components') %}
+    <tr><td>Basic + DA</td><td class="n">{{ p.basic_da|money }}</td><td></td><td></td></tr>
+    <tr><td>HRA</td><td class="n">{{ p.hra|money }}</td><td></td><td></td></tr>
+    <tr><td>Conveyance</td><td class="n">{{ p.conveyance|money }}</td><td></td><td></td></tr>
+    {% if p.other_allowance %}<tr><td>Other allowance</td><td class="n">{{ p.other_allowance|money }}</td><td></td><td></td></tr>{% endif %}
+    {% endif %}
+    <tr><td>{{ 'Salary earned (total of above)' if p.get('components') else 'Basic earned' }}</td><td class="n">{{ p.basic|money }}</td><td>Provident fund</td><td class="n">{{ p.pf|money }}</td></tr>
     <tr><td>Overtime ({{ p.ot_hours }} h{% if p.get('late_penalty_hours') %} after {{ p.late_penalty_hours }} h late penalty{% endif %})</td><td class="n">{{ p.ot_pay|money }}</td><td>ESI</td><td class="n">{{ p.esi|money }}</td></tr>
     <tr><td>Allowances</td><td class="n">{{ p.allowance|money }}</td><td>Advance recovery</td><td class="n">{{ p.advance|money }}</td></tr>
     <tr><td>Bonus / incentive</td><td class="n">{{ p.bonus|money }}</td><td>TDS + other</td><td class="n">{{ (p.tds + p.other_deduction)|money }}</td></tr>

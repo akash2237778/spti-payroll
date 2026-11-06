@@ -136,7 +136,8 @@ PAY_ROLES = {"admin"}
 EDIT_ROLES = {"admin", "hr"}
 # Employee fields only someone who may see pay can read or change.
 PAY_FIELDS = ["category", "salary_type", "salary_rate", "ot_enabled", "ot_multiplier", "pf_enabled", "esi_enabled", "disabled_person",
-              "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes", "pay_mode", "bank_value"]
+              "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes", "pay_mode", "bank_value",
+              "comp_hra", "comp_conveyance", "comp_other"]
 
 
 def _role():
@@ -369,7 +370,7 @@ def device_action(did, action):
 
 EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
               "shift_id", "category", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
-              "esi_no", "notes", "pay_mode", "bank_value"]
+              "esi_no", "notes", "pay_mode", "bank_value", "comp_hra", "comp_conveyance", "comp_other"]
 EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break", "disabled_person"]
 
 
@@ -438,6 +439,11 @@ def employee_edit(eid):
         vals["category"] = vals["category"] if vals["category"] in ("worker", "staff") else "worker"
         vals["pay_mode"] = vals["pay_mode"] if vals["pay_mode"] in payroll.PAY_MODES else "bank"
         vals["bank_value"] = max(0.0, float(vals["bank_value"] or 0))
+        for k in ("comp_hra", "comp_conveyance", "comp_other"):
+            vals[k] = max(0.0, float(vals[k] or 0))
+        if can_pay() and vals["comp_hra"] + vals["comp_conveyance"] + vals["comp_other"] > vals["salary_rate"] + 0.005:
+            flash("HRA + conveyance + other allowance cannot be more than the salary rate", "error")
+            return redirect(request.url)
         vals["shift_id"] = int(vals["shift_id"]) if vals["shift_id"] else None
         for k in EMP_FLAGS:
             vals[k] = 1 if f.get(k) else 0
@@ -527,6 +533,12 @@ def employee_salary(eid):
             "pf_enabled": 1 if f.get("pf_enabled") else 0, "esi_enabled": 1 if f.get("esi_enabled") else 0,
             "pay_mode": f.get("pay_mode") if f.get("pay_mode") in payroll.PAY_MODES else (emp["pay_mode"] or "bank"),
             "bank_value": max(0.0, float(f.get("bank_value") or 0))}
+    if g.settings.get("salary_components") == "1":
+        for k in ("comp_hra", "comp_conveyance", "comp_other"):
+            vals[k] = max(0.0, float(f.get(k) or 0))
+        if vals["comp_hra"] + vals["comp_conveyance"] + vals["comp_other"] > rate + 0.005:
+            flash("HRA + conveyance + other allowance cannot be more than the salary rate", "error")
+            return redirect(f.get("back") or url_for("att_employee", eid=eid))
     before = {k: emp[k] for k in vals}
     g.conn.execute(f"UPDATE employees SET {', '.join(k + '=?' for k in vals)} WHERE id=?", list(vals.values()) + [eid])
     audit("employee_salary_edit", {"id": eid, "name": emp["name"], "from": before, "to": vals})
@@ -637,7 +649,9 @@ def employees_bulk():
         n = 0
         for eid in f.getlist("id"):
             g.conn.execute("""UPDATE employees SET department=?, salary_type=?, salary_rate=?, ot_enabled=?, ot_multiplier=?,
-                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=?, category=?, pay_mode=?, bank_value=? WHERE id=?""",
+                              pf_enabled=?, esi_enabled=?, shift_id=?, paid_break=?, category=?, pay_mode=?, bank_value=?,
+                              comp_hra=COALESCE(?, comp_hra), comp_conveyance=COALESCE(?, comp_conveyance),
+                              comp_other=COALESCE(?, comp_other) WHERE id=?""",
                            (f.get(f"department_{eid}", ""), f.get(f"salary_type_{eid}", "monthly"),
                             float(f.get(f"salary_rate_{eid}") or 0), 1 if f.get(f"ot_enabled_{eid}") else 0,
                             float(f.get(f"ot_multiplier_{eid}") or 1), 1 if f.get(f"pf_enabled_{eid}") else 0,
@@ -645,7 +659,9 @@ def employees_bulk():
                             1 if f.get(f"paid_break_{eid}") else 0,
                             f.get(f"category_{eid}") if f.get(f"category_{eid}") in ("worker", "staff") else "worker",
                             f.get(f"pay_mode_{eid}") if f.get(f"pay_mode_{eid}") in payroll.PAY_MODES else "bank",
-                            max(0.0, float(f.get(f"bank_value_{eid}") or 0)), int(eid)))
+                            max(0.0, float(f.get(f"bank_value_{eid}") or 0)),
+                            *[(max(0.0, float(f.get(f"{k}_{eid}") or 0)) if f"{k}_{eid}" in f else None)
+                              for k in ("comp_hra", "comp_conveyance", "comp_other")], int(eid)))
             n += 1
         audit("employee_bulk_save", f"{n} employees")
         flash(f"Updated {n} employees", "ok")
@@ -1629,7 +1645,8 @@ def settings_view():
             for k in db.DEFAULT_SETTINGS:
                 if k in f:
                     g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, f[k].strip()))
-            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule", "sandwich_paid_leave", "short_day_rule"):
+            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule", "sandwich_paid_leave", "short_day_rule",
+                      "salary_components"):
                 g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, "1" if f.get(k) else "0"))
             audit("settings_save", {k: f[k] for k in f if k != "csrf"})
             flash("Settings saved", "ok")

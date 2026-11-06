@@ -21,10 +21,10 @@ def r2(x):
 
 
 PAY_MODES = {"bank": "All by bank", "cash": "All in cash", "fixed": "Fixed amount by bank, rest cash",
-             "percent": "Percentage by bank, rest cash"}
+             "percent": "Percentage by bank, rest cash", "esi": "ESI wages by bank, rest cash"}
 
 
-def split_bank_cash(emp, net, bank_override=None):
+def split_bank_cash(emp, net, bank_override=None, esi_wages_amount=None):
     """(bank, cash, how) for a net amount: this month's override wins, else the employee's default pay mode."""
     mode = (emp.get("pay_mode") or "bank")
     val = float(emp.get("bank_value") or 0)
@@ -36,6 +36,8 @@ def split_bank_cash(emp, net, bank_override=None):
         bank, how = val, f"fixed {val:g} by bank"
     elif mode == "percent":
         bank, how = round_half_up(net * val / 100), f"{val:g}% by bank"
+    elif mode == "esi":
+        bank, how = round_half_up(esi_wages_amount or 0), "ESI wages by bank"
     else:
         bank, how = net, PAY_MODES["bank"]
     bank = max(0.0, min(float(net), bank))
@@ -53,12 +55,28 @@ def esi_ceiling(emp, settings):
     return float(settings.get("esi_gross_ceiling") or 21000)
 
 
-def esi_wages(basic, ot_pay, allowance=0.0, bonus=0.0):
-    """Wages u/s 2(88) Code on Social Security 2020 for this payroll: total remuneration minus overtime allowance
-    (an excluded head), except that excluded heads above one-half of total remuneration are added back."""
+def esi_wages(basic, ot_pay, allowance=0.0, bonus=0.0, excluded_parts=0.0):
+    """Wages u/s 2(88) Code on Social Security 2020: total remuneration minus the excluded heads - overtime
+    allowance, and HRA / conveyance when the salary is split into components (`excluded_parts`, already inside
+    `basic`) - except that excluded heads above one-half of total remuneration are added back."""
     total = basic + ot_pay + allowance + bonus
-    excluded = ot_pay
+    excluded = ot_pay + excluded_parts
     return total - excluded + max(0.0, excluded - total / 2)
+
+
+def salary_parts(emp, settings, earned):
+    """Split earned salary into Basic+DA / HRA / Conveyance / Other allowance in the employee's proportions.
+    Without components (setting off or nothing entered) everything is Basic+DA."""
+    rate = float(emp.get("salary_rate") or 0)
+    parts = {"basic_da": earned, "hra": 0.0, "conveyance": 0.0, "other": 0.0}
+    if settings.get("salary_components") != "1" or rate <= 0:
+        return parts
+    h, c, o = (float(emp.get(k) or 0) for k in ("comp_hra", "comp_conveyance", "comp_other"))
+    if h + c + o <= 0 or h + c + o > rate + 0.005:
+        return parts
+    parts.update(hra=earned * h / rate, conveyance=earned * c / rate, other=earned * o / rate)
+    parts["basic_da"] = earned - parts["hra"] - parts["conveyance"] - parts["other"]
+    return parts
 
 
 def round_up(x):
@@ -74,7 +92,7 @@ def contribution_period(month):
     return f"{y if m >= 10 else y - 1}-10"
 
 
-def esi_contribution(emp, settings, *, basic, ot_pay, allowance=0.0, bonus=0.0, payable_days=0, covered=None):
+def esi_contribution(emp, settings, *, basic, ot_pay, allowance=0.0, bonus=0.0, payable_days=0, covered=None, excluded_parts=0.0):
     """Employee and employer ESI for one month.
     covered=None decides coverage on this month's wages; True/False is the contribution-period decision
     (once covered in a period, contributions continue to its end even if wages rise above the ceiling)."""
@@ -82,7 +100,7 @@ def esi_contribution(emp, settings, *, basic, ot_pay, allowance=0.0, bonus=0.0, 
     if not esi_applicable(emp, settings):
         out["esi_note"] = "ESI not applicable"
         return out
-    wages = esi_wages(basic, ot_pay, allowance, bonus)
+    wages = esi_wages(basic, ot_pay, allowance, bonus, excluded_parts)
     out["esi_wages"] = r2(wages)
     within = wages <= esi_ceiling(emp, settings)
     is_covered = within if covered is None else bool(covered or within)
@@ -147,11 +165,13 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None,
 
     gross = basic + ot_pay + earn_adj["allowance"] + earn_adj["bonus"]
 
+    parts = salary_parts(emp, settings, basic)
     pf = 0.0
-    if emp["pf_enabled"]:
-        pf = min(basic, float(settings.get("pf_wage_ceiling") or 15000)) * float(settings.get("pf_rate") or 12) / 100
+    if emp["pf_enabled"]:   # PF on Basic + DA (the whole salary when it is not split into components)
+        pf = min(parts["basic_da"], float(settings.get("pf_wage_ceiling") or 15000)) * float(settings.get("pf_rate") or 12) / 100
     esi_info = esi_contribution(emp, settings, basic=basic, ot_pay=ot_pay, allowance=earn_adj["allowance"],
-                                bonus=earn_adj["bonus"], payable_days=payable, covered=esi_covered)
+                                bonus=earn_adj["bonus"], payable_days=payable, covered=esi_covered,
+                                excluded_parts=parts["hra"] + parts["conveyance"])
     esi = esi_info["esi"]
 
     total_ded = pf + esi + sum(ded_adj.values())
@@ -166,7 +186,9 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None,
         "ot_hours_gross": r2(summary.get("ot_min_gross", summary["ot_min"]) / 60.0),
         "late_penalty_hours": r2(summary.get("late_penalty_min", 0) / 60.0),
         "std_hours": r2(std_hours), "category": "staff" if is_staff else "worker",
-        **dict(zip(("bank", "cash", "pay_how"), split_bank_cash(emp, round_half_up(net), bank_override))),
+        **dict(zip(("bank", "cash", "pay_how"), split_bank_cash(emp, round_half_up(net), bank_override, esi_info["esi_wages"]))),
+        "basic_da": r2(parts["basic_da"]), "hra": r2(parts["hra"]), "conveyance": r2(parts["conveyance"]),
+        "other_allowance": r2(parts["other"]), "components": parts["hra"] + parts["conveyance"] + parts["other"] > 0,
         "bank_override": bank_override is not None,
         "esi_wages": esi_info["esi_wages"], "esi_employer": esi_info["esi_employer"],
         "esi_covered": esi_info["esi_covered"], "esi_note": esi_info["esi_note"],

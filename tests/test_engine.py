@@ -597,3 +597,27 @@ def test_esi_contribution_periods():
     cp = payroll.contribution_period
     assert [cp(m) for m in ("2026-04", "2026-09", "2026-10", "2026-12", "2027-01", "2027-03")] == \
         ["2026-04", "2026-04", "2026-10", "2026-10", "2026-10", "2026-10"]
+
+
+# ---------------------------------------------------------------- salary components (legal ESI structuring)
+
+def test_salary_components_esi_pf_and_bank():
+    on = dict(S, salary_components="1")
+    emp = {"salary_type": "monthly", "salary_rate": 30000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 1, "esi_enabled": 0,
+           "comp_hra": 10000, "comp_conveyance": 5000, "comp_other": 0, "pay_mode": "esi"}
+    s = {"payable_days": 30, "std_min": 480, "worked_min": 0, "ot_min": 0, "paid_off_days": 0}
+    p = payroll.calculate(emp, s, "2026-11", on)                     # November: 30 days
+    assert (p["basic_da"], p["hra"], p["conveyance"]) == (15000, 10000, 5000) and p["components"]
+    assert p["esi_wages"] == 15000 and p["esi_covered"] and p["esi"] == 113         # legally within the ESI ceiling
+    assert p["pf"] == 1800                                                           # PF on Basic + DA
+    assert p["bank"] == 15000 and p["cash"] == p["net"] - 15000                     # ESI wages by bank, rest cash
+    # with overtime the excluded heads pass one-half: the excess counts back as ESI wages
+    p2 = payroll.calculate(emp, dict(s, ot_min=480 * 60 // 60 * 10), "2026-11", on)  # 80 h OT
+    total = p2["basic"] + p2["ot_pay"]
+    expected = total - (p2["ot_pay"] + 15000) + max(0, p2["ot_pay"] + 15000 - total / 2)
+    assert abs(p2["esi_wages"] - expected) < 0.01
+    # setting off (or no split entered): whole salary is Basic + DA, as before
+    off = payroll.calculate(emp, s, "2026-11", S)
+    assert not off["components"] and off["esi_wages"] == 30000 and not off["esi_covered"] and off["pf"] == 1800
+    bad = payroll.salary_parts(dict(emp, comp_hra=40000), on, 30000)                # components above the rate: ignored
+    assert bad["basic_da"] == 30000

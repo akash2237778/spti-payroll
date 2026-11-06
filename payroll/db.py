@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS employees (
     bank_value REAL DEFAULT 0,
     paid_break INTEGER DEFAULT 0,          -- 1 = lunch break is paid time (not deducted)
     disabled_person INTEGER DEFAULT 0,     -- person with disability: ESI ceiling 25,000
+    comp_hra REAL DEFAULT 0, comp_conveyance REAL DEFAULT 0, comp_other REAL DEFAULT 0,  -- parts of salary_rate
     weekly_off TEXT DEFAULT '6',           -- python weekday numbers, Mon=0 .. Sun=6
     pf_enabled INTEGER DEFAULT 0, esi_enabled INTEGER DEFAULT 0,
     bank_name TEXT DEFAULT '', bank_account TEXT DEFAULT '', ifsc TEXT DEFAULT '',
@@ -144,6 +145,7 @@ DEFAULT_SETTINGS = {
     "esi_employer_rate": "3.25",
     "esi_disabled_ceiling": "25000",    # ceiling for a person with disability
     "esi_low_wage_daily": "176",        # average daily wage at or below this: no employee share (employer still pays)
+    "salary_components": "0",           # 1 = salary can be split into Basic+DA / HRA / Conveyance / Other allowance
     "auto_sync_minutes": "30",
     "max_duty_hours": "26",             # longest continuous duty that may be paired as one session
     "long_duty_flag_hours": "16",       # sessions at least this long are flagged for a quick review
@@ -189,7 +191,9 @@ def init_db():
                                 ("leaves", "created_by", "TEXT"), ("leaves", "created_at", "TEXT"),
                                 ("employees", "category", "TEXT DEFAULT 'worker'"),
                                 ("employees", "pay_mode", "TEXT DEFAULT 'bank'"), ("employees", "bank_value", "REAL DEFAULT 0"),
-                                ("employees", "disabled_person", "INTEGER DEFAULT 0")):
+                                ("employees", "disabled_person", "INTEGER DEFAULT 0"),
+                                ("employees", "comp_hra", "REAL DEFAULT 0"), ("employees", "comp_conveyance", "REAL DEFAULT 0"),
+                                ("employees", "comp_other", "REAL DEFAULT 0")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

@@ -67,6 +67,9 @@ def calc_lines(row, settings, cur="₹"):
         normal = max(0.0, (s["worked_min"] - s.get("ot_min_gross", s["ot_min"])) / 60)
         lines.append(("Basic earned", f"{money(p['rate'], cur)}/h × ({num(round(normal, 2))} normal hours + "
                       f"{num(s['paid_off_days'])} paid off-days × {num(std_h)} h)", money(p["basic"], cur)))
+    if p.get("components"):
+        lines.append(("  of which", f"Basic + DA {money(p['basic_da'], cur)}, HRA {money(p['hra'], cur)}, "
+                      f"conveyance {money(p['conveyance'], cur)}, other allowance {money(p['other_allowance'], cur)}", ""))
     gross_ot = s.get("ot_min_gross", s["ot_min"]) / 60
     if s.get("late_penalty_min") or s.get("early_short_min"):
         parts = [f"{engine.fmt_min(s.get('ot_min_gross', 0))} earned"]
@@ -238,7 +241,10 @@ def _employee_sheet(wb, row, month, settings, R, title):
               ("Standard shift hours", round(s["std_min"] / 60, 4)), ("OT eligible (1/0)", 1 if e.get("ot_enabled", 1) and e.get("category") != "staff" else 0),
               ("OT multiplier", float(e.get("ot_multiplier") or 1)), ("PF (1/0)", 1 if e.get("pf_enabled") else 0),
               ("ESI covered this month (1/0, decided per contribution period)", 1 if p.get("esi_covered") else 0), ("Weekly off paid (1/0)", wo_paid),
-              ("Paid lunch break (1/0)", 1 if e.get("paid_break") else 0)]
+              ("Paid lunch break (1/0)", 1 if e.get("paid_break") else 0),
+              ("HRA (part of rate)", float(e.get("comp_hra") or 0) if p.get("components") else 0),
+              ("Conveyance (part of rate)", float(e.get("comp_conveyance") or 0) if p.get("components") else 0),
+              ("Other allowance (part of rate)", float(e.get("comp_other") or 0) if p.get("components") else 0)]
     P = {}
     for i, (label, val) in enumerate(params, 3):
         ws.cell(row=i, column=1, value=label)
@@ -249,13 +255,14 @@ def _employee_sheet(wb, row, month, settings, R, title):
     STD, OTE, OTM, PFE, ESE, WOP = (P["Standard shift hours"], P["OT eligible (1/0)"], P["OT multiplier"], P["PF (1/0)"],
                                     P["ESI covered this month (1/0, decided per contribution period)"], P["Weekly off paid (1/0)"])
     PB = P["Paid lunch break (1/0)"]
+    HRA, CONV, OTHA = P["HRA (part of rate)"], P["Conveyance (part of rate)"], P["Other allowance (part of rate)"]
     paid_break = bool(e.get("paid_break"))
 
     head = ["Date", "Day", "Shift", "Status", "In", "Out", "Worked min", "Late min", "Early min", "OT min", "Late penalty min",
             "Work credit", "Extra credit", "Weekly-off credit", "Holiday credit", "Leave credit", "Notes",
             "OT starts after (min)", "Break min", "Break after min", "OT after min", "OT block min", "Lunch from", "Lunch to",
             "Short-day min (OT −)"]
-    H = 14
+    H = len(params) + 4   # day table starts below the settings block
     _hdr(ws, H, head)
     ws.row_dimensions[H].height = 30
     first = H + 1
@@ -329,6 +336,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
         bank_rule = ("Bank amount (all in cash)", 0, "bank_target")
     elif mode == "fixed":
         bank_rule = ("Bank amount (fixed)", bval, "bank_target")
+    elif mode == "esi":
+        bank_rule = ("Bank amount (ESI wages)", "=ROUND({esi_w},0)", "bank_target")
     elif mode == "percent":
         bank_rule = (f"Bank amount ({bval:g}% of net)", f"=ROUND({{net}}*{bval}/100,0)", "bank_target")
     else:
@@ -368,8 +377,13 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ("Allowance", p["allowance"], "allow"),
         ("Bonus / incentive", p["bonus"], "bonus"),
         ("GROSS", "={basic}+{ot_pay}+{allow}+{bonus}", "gross"),
-        ("PF", f"=IF({PFE}=1,MIN({{basic}},{R['pf_ceil']})*{R['pf_rate']}/100,0)", "pf"),
-        ("ESI wages u/s 2(88) (gross − OT, + OT above half of gross)", "=IF({gross}>0,{gross}-{ot_pay}+MAX(0,{ot_pay}-{gross}/2),0)", "esi_w"),
+        ("  HRA earned", f"=IF({BA}>0,{{basic}}*{HRA}/{BA},0)", "hra_e"),
+        ("  Conveyance earned", f"=IF({BA}>0,{{basic}}*{CONV}/{BA},0)", "conv_e"),
+        ("  Other allowance earned", f"=IF({BA}>0,{{basic}}*{OTHA}/{BA},0)", "oth_e"),
+        ("  Basic + DA earned (PF wages)", "={basic}-{hra_e}-{conv_e}-{oth_e}", "basic_da"),
+        ("PF", f"=IF({PFE}=1,MIN({{basic_da}},{R['pf_ceil']})*{R['pf_rate']}/100,0)", "pf"),
+        ("ESI wages u/s 2(88) (gross − OT − HRA − conveyance, + excluded above half of gross)",
+         "=IF({gross}>0,{gross}-{ot_pay}-{hra_e}-{conv_e}+MAX(0,{ot_pay}+{hra_e}+{conv_e}-{gross}/2),0)", "esi_w"),
         ("ESI", f"=IF(AND({ESE}=1,{{esi_w}}>0),IF(AND({{payable}}>0,{{esi_w}}/{{payable}}<={R['esi_low']}),0,"
                 f"ROUNDUP(ROUND({{esi_w}}*{R['esi_rate']}/100,6),0)),0)", "esi"),
         ("ESI employer (not deducted)", f"=IF(AND({ESE}=1,{{esi_w}}>0),ROUNDUP(ROUND({{esi_w}}*{R['esi_er_rate']}/100,6),0),0)", "esi_er"),
@@ -399,7 +413,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
             ws.cell(row=r, column=1).font = BOLD
             c.font = BOLD
         if key in ("per_day", "hour_rate", "basic", "ot_pay", "allow", "bonus", "gross", "pf", "esi", "adv", "tds", "oth", "ded", "net",
-                   "bank_target", "bank", "cash", "esi_w", "esi_er"):
+                   "bank_target", "bank", "cash", "esi_w", "esi_er", "hra_e", "conv_e", "oth_e", "basic_da"):
             c.number_format = "#,##0.00"
     widths = {"A": 36, "B": 14, "C": 9, "D": 7, "E": 14, "F": 14, "Q": 30}
     for i in range(1, 26):

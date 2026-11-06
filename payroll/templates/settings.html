@@ -71,6 +71,10 @@
   <div><label>ESI wage ceiling ({{ cur }})</label><input name="esi_gross_ceiling" value="{{ s.esi_gross_ceiling }}"></div>
   <div><label>Ceiling, person with disability ({{ cur }})</label><input name="esi_disabled_ceiling" value="{{ s.get('esi_disabled_ceiling', '25000') }}"></div>
   <div><label>No employee share if avg daily wage ≤ ({{ cur }})</label><input name="esi_low_wage_daily" value="{{ s.get('esi_low_wage_daily', '176') }}"></div>
+  <div style="grid-column:1 / -1"><label class="chk"><input type="checkbox" name="salary_components" {{ 'checked' if s.get('salary_components') == '1' }}>
+    <b>Salary components</b>: split salaries into Basic + DA / HRA / Conveyance / Other allowance. ESI wages then leave out HRA and conveyance
+    (with overtime, at most half of pay, as the Code requires) and PF is on Basic + DA. Overtime and pay stay on the full salary.
+    Employees without a split are unaffected.</label></div>
   <div><label>Employee PF %</label><input name="pf_rate" value="{{ s.pf_rate }}"></div>
   <div><label>PF wage ceiling ({{ cur }})</label><input name="pf_wage_ceiling" value="{{ s.pf_wage_ceiling }}"></div>
 </div></div>

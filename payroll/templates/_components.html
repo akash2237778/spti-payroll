@@ -1,0 +1,30 @@
+{# Salary component inputs. Needs: src (employee), rate_name (name of the rate input) #}
+{% if settings.salary_components == '1' %}
+  <div class="comp-box" data-rate-input="{{ rate_name }}" style="grid-column: 1 / -1">
+    <label style="margin-bottom:6px"><b>Salary components</b> (parts of the rate; Basic + DA is the rest) — HRA and conveyance are left out of ESI wages, up to half of pay</label>
+    <div class="form-grid">
+      <div><label>HRA ({{ cur }})</label><input name="comp_hra" type="number" step="0.01" min="0" value="{{ src.comp_hra or 0 }}"></div>
+      <div><label>Conveyance ({{ cur }})</label><input name="comp_conveyance" type="number" step="0.01" min="0" value="{{ src.comp_conveyance or 0 }}"></div>
+      <div><label>Other allowance ({{ cur }})</label><input name="comp_other" type="number" step="0.01" min="0" value="{{ src.comp_other or 0 }}"></div>
+      <div><label>Basic + DA ({{ cur }})</label><input class="comp-basic" readonly tabindex="-1"></div>
+    </div>
+    <p class="small comp-warn" style="margin:4px 0 0"></p>
+  </div>
+{% endif %}
+<script>
+(function () {
+  document.querySelectorAll('.comp-box').forEach(function (box) {
+    var form = box.closest('form'), rate = form.querySelector('[name="' + box.dataset.rateInput + '"]');
+    function upd() {
+      var r = parseFloat(rate && rate.value) || 0, h = parseFloat(form.comp_hra.value) || 0,
+          c = parseFloat(form.comp_conveyance.value) || 0, o = parseFloat(form.comp_other.value) || 0;
+      box.querySelector('.comp-basic').value = (r - h - c - o).toFixed(2);
+      var w = box.querySelector('.comp-warn');
+      if (h + c + o > r) { w.textContent = 'Components are more than the rate.'; w.style.color = 'var(--bad)'; }
+      else if (r && (h + c) > r / 2) { w.textContent = 'HRA + conveyance are more than half: the excess still counts as ESI wages.'; w.style.color = 'var(--warn)'; }
+      else { w.textContent = r ? 'ESI wages (before overtime) ≈ ' + (r - h - c).toFixed(0) : ''; w.style.color = ''; }
+    }
+    form.addEventListener('input', upd); upd();
+  });
+})();
+</script>

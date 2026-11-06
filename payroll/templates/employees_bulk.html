@@ -5,7 +5,7 @@
 <p class="muted">Set salary type and rate for everyone in one go. Monthly = fixed monthly salary, Daily = wage per day, Hourly = wage per hour. Staff are paid on payable days only (no overtime).</p>
 <form method="post">{{ csrf_field() }}
 <div class="scroll"><table>
-  <tr><th>ID</th><th>Name</th><th>Department</th><th>Shift</th><th>Category</th><th>Type</th><th>Rate ({{ cur }})</th><th>OT</th><th>OT x</th><th>Paid lunch</th><th>Salary paid</th><th>Bank {{ cur }} / %</th><th>PF</th><th>ESI</th></tr>
+  <tr><th>ID</th><th>Name</th><th>Department</th><th>Shift</th><th>Category</th><th>Type</th><th>Rate ({{ cur }})</th><th>OT</th><th>OT x</th><th>Paid lunch</th><th>Salary paid</th><th>Bank {{ cur }} / %</th>{% if settings.salary_components == '1' %}<th>HRA</th><th>Conveyance</th><th>Other allow.</th>{% endif %}<th>PF</th><th>ESI</th></tr>
   {% for e in rows %}<tr>
     <td>{{ e.device_user_id }}<input type="hidden" name="id" value="{{ e.id }}"></td><td>{{ e.name }}</td>
     <td><input name="department_{{ e.id }}" value="{{ e.department }}" size="12"></td>
@@ -18,6 +18,8 @@
     <td><input type="checkbox" name="paid_break_{{ e.id }}" {{ 'checked' if e.paid_break }}></td>
     <td><select name="pay_mode_{{ e.id }}">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (e.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></td>
     <td><input name="bank_value_{{ e.id }}" type="number" step="0.01" min="0" value="{{ e.bank_value or 0 }}" style="width:90px"></td>
+    {% if settings.salary_components == '1' %}{% for k in ('comp_hra', 'comp_conveyance', 'comp_other') %}
+    <td><input name="{{ k }}_{{ e.id }}" type="number" step="0.01" min="0" value="{{ e[k] or 0 }}" style="width:85px"></td>{% endfor %}{% endif %}
     <td><input type="checkbox" name="pf_enabled_{{ e.id }}" {{ 'checked' if e.pf_enabled }}></td>
     <td><input type="checkbox" name="esi_enabled_{{ e.id }}" {{ 'checked' if e.esi_enabled }}></td>
   </tr>{% endfor %}
