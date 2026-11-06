@@ -676,3 +676,15 @@ def test_end_to_end(client):
     login_as("viewer1", "viewer123")
     assert post(c, "/gatepass?month=2026-10", employee_id=str(g19), work_date=day19, out_time="10:00").status_code == 403
     login_as("admin", "secret123")
+
+    # 20. attendance page highlights days with several punches and lists every timestamp
+    with db.tx() as conn:
+        rows20 = pr.compute_month(conn, "2026-10")
+    multi_day = next(((r["emp"], d) for r in rows20 for d in r["days"] if len(d["punches"]) > 2), None)
+    assert multi_day, "real data has days with more than two punches"
+    e20, d20 = multi_day
+    pg20 = c.get(f"/attendance/employee/{e20['id']}?month=2026-10").data.decode()
+    assert f'id="d{d20["date"].day}" class="multi-entry"' in pg20
+    assert f'id="pl{d20["date"].day}" hidden class="punch-list-row"' in pg20 and f"{len(d20['punches'])} punches ▾" in pg20
+    for t in d20["punches"]:
+        assert t.strftime("%H:%M:%S") in pg20

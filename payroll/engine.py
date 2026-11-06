@@ -161,7 +161,7 @@ def pair_sessions(punches, shift, settings, typical=None, expect=None):
         seg = ps[i:j + 1]
         sessions.append({"start": seg[0]["ts"], "end": seg[-1]["ts"] if j > i else None,
                          "punches": [p["ts"] for p in seg], "ids": [p["id"] for p in seg],
-                         "roles": [p["role"] for p in seg], "orphan": j == i})
+                         "roles": [p["role"] for p in seg], "sources": [p.get("source") for p in seg], "orphan": j == i})
         i = j + 1
     return sessions
 
@@ -494,10 +494,10 @@ def load_streams(conn, device_user_ids, start, end, dedup_seconds, machine_only=
     machine_only: exactly what the device recorded - no manual punches, no IN/OUT/ignore decisions."""
     lo = dt.datetime.combine(start - dt.timedelta(days=STREAM_MARGIN_DAYS), dt.time())
     hi = dt.datetime.combine(end + dt.timedelta(days=STREAM_MARGIN_DAYS + 1), dt.time())
-    q = ("SELECT id, device_user_id, ts, role FROM punches WHERE deleted = 0 AND COALESCE(role, '') != 'ignore' "
+    q = ("SELECT id, device_user_id, ts, role, source FROM punches WHERE deleted = 0 AND COALESCE(role, '') != 'ignore' "
          "AND ts BETWEEN ? AND ?")
     if machine_only:
-        q = "SELECT id, device_user_id, ts, NULL AS role FROM punches WHERE source = 'device' AND ts BETWEEN ? AND ?"
+        q = "SELECT id, device_user_id, ts, NULL AS role, source FROM punches WHERE source = 'device' AND ts BETWEEN ? AND ?"
     args = [lo.strftime("%Y-%m-%d %H:%M:%S"), hi.strftime("%Y-%m-%d %H:%M:%S")]
     if device_user_ids is not None:
         q += " AND device_user_id IN (%s)" % ",".join("?" * len(device_user_ids))
@@ -505,7 +505,7 @@ def load_streams(conn, device_user_ids, start, end, dedup_seconds, machine_only=
     raw = defaultdict(list)
     for r in conn.execute(q, args):
         raw[r["device_user_id"]].append({"ts": dt.datetime.strptime(r["ts"], "%Y-%m-%d %H:%M:%S"),
-                                         "role": r["role"] or None, "id": r["id"]})
+                                         "role": r["role"] or None, "id": r["id"], "source": r["source"]})
     return {uid: dedup_punches(v, dedup_seconds) for uid, v in raw.items()}
 
 

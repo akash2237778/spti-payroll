@@ -43,7 +43,8 @@
 <div class="scroll" style="margin-top:8px"><table>
   <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th class="n" title="Left early but given a full day: minutes taken off overtime">Short (OT −)</th><th class="n" title="Payable days this day contributes: worked + extra + paid weekly off / holiday / leave">Day credit</th><th>All punches</th><th>Notes</th><th></th></tr>
   {% for d in row.days %}
-  <tr id="d{{ d.date.day }}">
+  {% set n_punch = d.punches|length %}
+  <tr id="d{{ d.date.day }}" class="{{ 'multi-entry' if n_punch > 2 }}">
     <td>{{ d.date.strftime('%d %b') }}</td><td>{{ d.date.strftime('%a') }}</td>
     <td class="small">{% if d.shift %}<span class="badge {{ 'warn' if d.shift_changed }}" title="{{ d.shift.start_time }}–{{ d.shift.end_time }}">{{ d.shift.name }}</span>{% endif %}</td>
     <td>{{ st(d.status, d.override or (emp.id, d.date) in edited) }}{% if (emp.id, d.date) in edited %} <a class="small" href="{{ url_for('changes_view', month=month, eid=emp.id) }}" title="Changed from machine data - see Changes">✎</a>{% endif %}</td>
@@ -69,7 +70,10 @@
     {% set dc = day_credit(d, s.get('wo_paid', 1)) %}
     <td class="n">{{ fmt_min(d.early_short_min) if d.early_short_min and row.pay.salary_type != 'hourly' else '' }}</td>
     <td class="n">{% if dc %}<b>{{ dc|days }}</b>{% endif %}</td>
-    <td class="small muted">{% if d.get('pairs') %}{% for a, b in d.pairs %}{{ a.strftime('%H:%M') }}–{{ b.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}
+    <td class="small muted">{% if n_punch > 2 %}<button type="button" class="light small punch-toggle noprint" aria-expanded="false"
+        onclick="var r = document.getElementById('pl{{ d.date.day }}'); r.hidden = !r.hidden; this.setAttribute('aria-expanded', !r.hidden)"
+        title="Show every timestamp of this day">{{ n_punch }} punches ▾</button><br>{% endif %}
+      {% if d.get('pairs') %}{% for a, b in d.pairs %}{{ a.strftime('%H:%M') }}–{{ b.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}
       {% else %}{% for t in d.punches %}{{ t.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}
       {% if d.get('gate_personal_min') %}<br><span style="color:var(--bad)">gate pass −{{ fmt_min(d.gate_personal_min) }}</span>{% endif %}
       {% if d.get('gate_official_min') %}<br><span style="color:var(--ok)">official +{{ fmt_min(d.gate_official_min) }}</span>{% endif %}</td>
@@ -92,6 +96,36 @@
   {% set qin = d['in'] or (d.suggest.ts if d.suggest and d.suggest.role == 'in' else sh_start) %}
   {% set qout = d.out or (d.suggest.ts if d.suggest and d.suggest.role == 'out' else sh_end) %}
   {% set cur_ov = d.status if d.override else '' %}
+  {% if n_punch > 2 %}
+  <tr id="pl{{ d.date.day }}" hidden class="punch-list-row"><td colspan="16">
+    <div class="punch-list">
+      <b>{{ d.date.strftime('%a %d %b') }} · {{ n_punch }} punches</b>
+      {% if d.get('pairs') %}<span class="small muted">multiple in/out: worked time = sum of the in → out pairs</span>
+      {% else %}<span class="small muted">first punch = in, last = out; punches in between are breaks</span>{% endif %}
+      <ol>
+      {% set ns = namespace(prev=None) %}
+      {% for s in d.sessions %}{% set last = s.punches|length - 1 %}
+        {% for t in s.punches %}{% set i = loop.index0 %}
+        {% if s.orphan %}{% set lbl, cls = 'unpaired', 'bad' %}
+        {% elif i == 0 %}{% set lbl, cls = 'IN', 'ok' %}
+        {% elif i == last %}{% set lbl, cls = 'OUT', 'ok' %}
+        {% elif (last - 1) % 2 == 1 %}{% set lbl, cls = 'extra punch', '' %}
+        {% elif i % 2 == 1 %}{% set lbl, cls = 'out (break)', 'warn' %}
+        {% else %}{% set lbl, cls = 'back in', 'warn' %}{% endif %}
+        <li>
+          <span class="pt">{{ t.strftime('%H:%M:%S') }}</span>{% if t.date() != d.date %} <span class="small muted">{{ t.strftime('%d %b') }}</span>{% endif %}
+          <span class="badge {{ cls }}">{{ lbl }}</span>
+          {% if (s.get('sources') or [])[i] == 'manual' %}<span class="badge">added by hand</span>{% endif %}
+          {% if s.roles[i] in ('in', 'out') %}<span class="badge">confirmed {{ s.roles[i]|upper }}</span>{% endif %}
+          {% if ns.prev %}<span class="small muted">+{{ fmt_min(((t - ns.prev).total_seconds() // 60)|int) }} after previous</span>{% endif %}
+        </li>{% set ns.prev = t %}
+        {% endfor %}
+      {% endfor %}
+      </ol>
+      <a class="small" href="{{ url_for('att_day', eid=emp.id, date=d.date.isoformat(), back=request.full_path) }}">Open the day to correct punches →</a>
+    </div>
+  </td></tr>
+  {% endif %}
   <tr id="qf{{ d.date.day }}" hidden class="noprint"><td colspan="16" style="background:#fffbea">
     <form method="post" action="{{ url_for('att_day', eid=emp.id, date=d.date.isoformat()) }}" class="row" style="align-items:flex-end">{{ csrf_field() }}
       <input type="hidden" name="action" value="quick"><input type="hidden" name="back" value="{{ request.full_path }}#d{{ d.date.day }}">
