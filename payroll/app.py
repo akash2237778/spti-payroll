@@ -5,6 +5,7 @@ import functools
 import io
 import math
 import os
+import re
 import secrets
 
 from flask import (Flask, Response, abort, flash, g, redirect, render_template, request, send_file, session,
@@ -45,6 +46,12 @@ def dayname(v):
         return dt.date.fromisoformat(str(v)[:10]).strftime("%a")
     except ValueError:
         return ""
+
+
+@app.template_filter("amt")
+def amt_fmt(v):
+    """Amount for an input box: 4500, 4537.5, 12345.75 (no thousands separator, no lost paise)."""
+    return f"{float(v or 0):.2f}".rstrip("0").rstrip(".")
 
 
 @app.template_filter("days")
@@ -961,18 +968,16 @@ def month_totals(eid):
         g.conn.execute("DELETE FROM month_overrides WHERE employee_id=? AND month=?", (eid, month))
         flash("Same as calculated - no edit saved", "ok")
         return redirect(back)
-    if not f.get("reason", "").strip():
-        flash("Please give a reason for editing the final totals", "error")
-        return redirect(back)
+    reason = f.get("reason", "").strip() or "manual edit"
     g.conn.execute("""INSERT INTO month_overrides(employee_id, month, payable_days, ot_min, calc_payable_days, calc_ot_min,
                                                   reason, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)
                       ON CONFLICT(employee_id, month) DO UPDATE SET payable_days=excluded.payable_days, ot_min=excluded.ot_min,
                       calc_payable_days=excluded.calc_payable_days, calc_ot_min=excluded.calc_ot_min, reason=excluded.reason,
                       created_by=excluded.created_by, created_at=excluded.created_at""",
-                   (eid, month, days, ot, calc_days, calc_ot, f["reason"].strip(), g.user["username"],
+                   (eid, month, days, ot, calc_days, calc_ot, reason, g.user["username"],
                     dt.datetime.now().strftime(TS_FMT)))
     audit("month_totals_edit", {"emp": eid, "month": month, "payable_days": [calc_days, days], "ot_min": [calc_ot, ot],
-                                "reason": f["reason"].strip()})
+                                "reason": reason})
     flash(f"Final totals for {emp['name']} {month} edited", "ok")
     return redirect(back)
 
@@ -1562,7 +1567,11 @@ def save_cash_paid(eid, month, text, note=""):
     if not text:
         n = g.conn.execute("DELETE FROM cash_payments WHERE employee_id=? AND month=? AND carried_month IS NULL", (eid, month)).rowcount
         return n
-    amount = round(float(text.replace(",", "")), 2)   # any amount (rounded off or not), to the paisa
+    clean = re.sub(r"[₹,\s]|/-$|^rs\.?", "", text.lower())
+    try:
+        amount = round(float(clean), 2)   # any amount (rounded off or not), to the paisa
+    except ValueError:
+        raise ValueError(f"'{text}' is not an amount") from None
     if amount < 0:
         raise ValueError("negative")
     old = g.conn.execute("SELECT * FROM cash_payments WHERE employee_id=? AND month=?", (eid, month)).fetchone()
@@ -1608,9 +1617,14 @@ def cash_paid(eid):
     month = f["month"]
     back = f.get("back", "")
     back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    text = (f.get("paid_amount") or "").strip()
+    had = g.conn.execute("SELECT 1 FROM cash_payments WHERE employee_id=? AND month=?", (eid, month)).fetchone()
+    if not text and not had:
+        flash("Type the cash amount actually paid in the 'Paid' box, then Save (the grey number is only the calculated amount)", "error")
+        return redirect(back)
     try:
-        save_cash_paid(eid, month, f.get("paid_amount"), f.get("note", "").strip())
-        flash(f"Cash paid to {emp['name']} for {month} saved", "ok")
+        save_cash_paid(eid, month, text, f.get("note", "").strip())
+        flash(f"Cash paid to {emp['name']} for {month} saved" if text else f"Cash paid record for {emp['name']} {month} removed", "ok")
     except ValueError as e:
         flash(f"Not saved: {e}", "error")
     return redirect(back)

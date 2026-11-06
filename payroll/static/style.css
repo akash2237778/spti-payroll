@@ -265,3 +265,7 @@ tr.punch-list-row > td { background: #fbfaff; padding: 8px 14px 12px; }
 
 fieldset.grace { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin: 4px 0 0; }
 fieldset.grace legend { font-weight: 600; font-size: 13px; padding: 0 6px; color: #2b3846; }
+
+/* save messages float near the top of the screen so they are seen even when the page reopens lower down */
+.flashes { position: fixed; top: 60px; right: 16px; z-index: 30; width: min(440px, calc(100vw - 32px)); display: grid; gap: 8px; }
+.flashes .flash { margin: 0; cursor: pointer; box-shadow: 0 6px 20px rgba(16, 37, 60, .18); }

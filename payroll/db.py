@@ -150,7 +150,7 @@ DEFAULT_SETTINGS = {
     "pf_rate": "12", "pf_wage_ceiling": "15000",
     "esi_rate": "0.75", "esi_gross_ceiling": "21000",
     # ESIC (Code on Social Security 2020, wages u/s 2(88), ESIC circular 11.12.2025):
-    "esi_mode": "all",                  # all = every employee whose ESI wages are within the ceiling | ticked = only ticked
+    "esi_mode": "ticked",               # ESI only for employees with ESI ticked (the tick always decides)
     "esi_employer_rate": "3.25",
     "esi_disabled_ceiling": "25000",    # ceiling for a person with disability
     "esi_low_wage_daily": "176",        # average daily wage at or below this: no employee share (employer still pays)

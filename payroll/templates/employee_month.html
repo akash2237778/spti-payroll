@@ -158,7 +158,7 @@
     <table style="max-width:760px">
       <tr><th></th><th class="n">Calculated</th><th>Edited</th><th class="n">Used for pay</th></tr>
       <tr class="{{ 'edited' if ed.payable_days }}"><td><b>Payable days</b></td><td class="n">{{ s.calc_payable_days|days }}</td>
-        <td>{% if can_edit and not locked %}<input name="payable_days" type="number" step="0.5" min="0" max="31" style="width:90px"
+        <td>{% if can_edit and not locked %}<input name="payable_days" type="number" step="any" min="0" max="31" style="width:90px"
               value="{{ (s.payable_days|days) if ed.payable_days else '' }}" placeholder="{{ s.calc_payable_days|days }}">
             {% elif ed.payable_days %}{{ s.payable_days|days }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="n"><b>{{ s.payable_days|days }}</b>{% if ed.payable_days %} <span class="small">({{ '%+g'|format(s.payable_days - s.calc_payable_days) }})</span>{% endif %}</td></tr>
@@ -171,7 +171,7 @@
     {% if ed %}<p class="small" style="margin:6px 0"><b>Reason:</b> {{ s.edit_reason }}</p>{% endif %}
     {% if can_edit and not locked %}
     <div class="row" style="margin-top:8px;align-items:flex-end">
-      <div class="grow"><label>Reason (required to edit)</label><input name="reason" style="width:100%" value="{{ s.edit_reason if ed else '' }}" placeholder="e.g. approved by manager"></div>
+      <div class="grow"><label>Reason (optional)</label><input name="reason" style="width:100%" value="{{ s.edit_reason if ed else '' }}" placeholder="e.g. approved by manager"></div>
       <button>Save final totals</button>
       {% if ed %}<button class="light" name="action" value="reset" formnovalidate onclick="return confirm('Go back to the calculated values?')">Use calculated</button>{% endif %}
     </div>
@@ -250,7 +250,7 @@
       </table>
       {% if not (cp and cp.carried_month) %}
       <div class="row" style="align-items:flex-end;margin-top:6px">
-        <div><label>Paid ({{ cur }})</label><input name="paid_amount" type="number" step="any" min="0" style="width:110px" value="{{ '%g'|format(cp.paid_amount) if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
+        <div><label>Paid ({{ cur }})</label><input name="paid_amount" inputmode="decimal" style="width:110px" value="{{ cp.paid_amount|amt if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
         <div class="grow"><label>Note</label><input name="note" style="width:100%" value="{{ cp.note if cp else '' }}" placeholder="rounded off"></div>
         <button class="small">Save</button>
       </div>

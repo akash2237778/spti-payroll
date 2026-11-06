@@ -39,7 +39,10 @@
 {% endif %}
 <main>
   <div class="print-head"><b>{{ settings.company_name }}</b><span>{{ self.title() }}</span><span>printed {{ printed_at }}</span></div>
-  {% for cat, msg in get_flashed_messages(with_categories=true) %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
+  {% with msgs = get_flashed_messages(with_categories=true) %}{% if msgs %}
+  <div class="flashes" role="status">{% for cat, msg in msgs %}<div class="flash {{ cat }}" onclick="this.remove()" title="Click to close">{{ msg }}</div>{% endfor %}</div>
+  <script>setTimeout(function () { document.querySelectorAll('.flashes .flash.ok').forEach(function (e) { e.remove(); }); }, 8000);</script>
+  {% endif %}{% endwith %}
   {% block body %}{% endblock %}
 </main>
 </body></html>

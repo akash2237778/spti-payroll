@@ -45,8 +45,8 @@ def split_bank_cash(emp, net, bank_override=None, esi_wages_amount=None):
 
 
 def esi_applicable(emp, settings):
-    """Covered establishment (default): ESI applies to every employee; 'ticked' mode: only ticked employees."""
-    return settings.get("esi_mode", "all") != "ticked" or bool(emp.get("esi_enabled"))
+    """ESI is deducted only for employees with ESI ticked (owner, 2026-11-06: unticked = no ESI)."""
+    return bool(emp.get("esi_enabled"))
 
 
 def esi_ceiling(emp, settings):

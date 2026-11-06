@@ -435,7 +435,7 @@ def test_end_to_end(client):
     assert post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days=str(calc_days + 1),
                 ot_hours="10:30", reason="").status_code == 200
     with db.tx() as conn:
-        assert not conn.execute("SELECT 1 FROM month_overrides").fetchone(), "reason is required"
+        assert conn.execute("SELECT reason FROM month_overrides").fetchone()[0] == "manual edit"   # saves without a reason
     post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days=str(calc_days + 1), ot_hours="10:30",
          reason="approved by manager")
     with db.tx() as conn:
@@ -587,8 +587,24 @@ def test_end_to_end(client):
     with db.tx() as conn:
         assert conn.execute("SELECT paid_amount FROM cash_payments WHERE employee_id=? AND month='2026-09'", (sep_emp,)).fetchone()[0] == 1234.75
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
-    assert 'value="1234.75"' in page and 'step="any"' in page
+    assert 'value="1234.75"' in page and 'name="paid_amount" inputmode="decimal"' in page
+    page = post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="Rs. 12,345.75/-").get_data(as_text=True)
+    assert 'value="12345.75"' in page                       # shown back exactly, paise kept
+    # messages float on screen, so a save is visible even though the page reopens at the form
+    assert '<div class="flashes"' in page and "saved" in page
+    # Save with an empty box: tell the user instead of silently doing nothing
+    post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="")          # clears the record
+    r = post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="")
+    assert "Type the cash amount actually paid" in r.get_data(as_text=True)
+    post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1234.75")
     post(c, "/payroll?month=2026-09", action="reopen")
+    # final totals save without a reason (no silent rejection); fractional payable days accepted
+    r = post(c, f"/attendance/employee/{sep_emp}/totals", month="2026-09", payable_days="20.25", ot_hours="", reason="")
+    assert "Final totals for" in r.get_data(as_text=True)
+    with db.tx() as conn:
+        assert conn.execute("SELECT payable_days, reason FROM month_overrides WHERE employee_id=? AND month='2026-09'",
+                            (sep_emp,)).fetchone()[:] == (20.25, "manual edit")
+        conn.execute("DELETE FROM month_overrides WHERE employee_id=? AND month='2026-09'", (sep_emp,))
     # record an advance from the attendance page, then deduct it there
     pg16 = c.get(f"/attendance/employee/{sep_emp}?month=2026-10").data.decode()
     assert "Record an advance given" in pg16
@@ -606,7 +622,7 @@ def test_end_to_end(client):
     # 17. ESIC: coverage decided per contribution period (Apr-Sep), ESI report and ESIC upload CSV
     with db.tx() as conn:
         e17 = conn.execute("SELECT id FROM employees WHERE device_user_id='2'").fetchone()["id"]
-        conn.execute("UPDATE employees SET salary_rate=20000, salary_type='monthly', category='worker', esi_no='1234567890' WHERE id=?", (e17,))
+        conn.execute("UPDATE employees SET salary_rate=20000, salary_type='monthly', category='worker', esi_no='1234567890', esi_enabled=1 WHERE id=?", (e17,))
     post(c, "/payroll?month=2026-04", action="finalize")                 # April frozen: covered at 20,000
     with db.tx() as conn:
         conn.execute("UPDATE employees SET salary_rate=40000 WHERE id=?", (e17,))
@@ -631,7 +647,7 @@ def test_end_to_end(client):
     post(c, "/settings", action="settings", salary_components="on")
     post(c, f"/employees/{kam}/split", month="2026-10", action="reset")   # earlier test set a one-month bank amount
     post(c, f"/employees/{kam}/salary", category="worker", salary_type="monthly", salary_rate="30000", ot_multiplier="1",
-         ot_enabled="on", pay_mode="esi", comp_hra="10000", comp_conveyance="5000", comp_other="0")
+         ot_enabled="on", esi_enabled="on", pay_mode="esi", comp_hra="10000", comp_conveyance="5000", comp_other="0")
     with db.tx() as conn:
         e18 = conn.execute("SELECT comp_hra, comp_conveyance, pay_mode FROM employees WHERE id=?", (kam,)).fetchone()
         p18 = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]

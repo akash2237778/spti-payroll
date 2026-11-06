@@ -162,7 +162,7 @@ def test_summary_and_monthly_salary():
     days = _month_days(pattern)
     s = engine.summarize(days, SHIFT, S, "monthly")
     assert s["payable_days"] == 30
-    emp = {"salary_type": "monthly", "salary_rate": 15000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 0}
+    emp = {"salary_type": "monthly", "salary_rate": 15000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 1}
     p = payroll.calculate(emp, s, "2026-09", S)
     # ESI applies to every employee (covered establishment): 0.75% of 15,000 = 112.50 -> 113
     assert p["basic"] == 15000 and p["esi"] == 113 and p["esi_employer"] == 488 and p["net"] == 15000 - 113
@@ -592,7 +592,7 @@ def test_esi_wages_exclude_overtime_with_half_rule():
 
 
 def test_esi_rates_rounding_ceiling_and_low_wage():
-    emp = {"esi_enabled": 0}
+    emp = {"esi_enabled": 1}
     st = dict(S)
     c = payroll.esi_contribution(emp, st, basic=15001, ot_pay=0, payable_days=26)
     assert c["esi_covered"] and c["esi"] == 113 and c["esi_employer"] == 488          # rounded UP to the rupee
@@ -601,8 +601,8 @@ def test_esi_rates_rounding_ceiling_and_low_wage():
     assert payroll.esi_contribution(dict(emp, disabled_person=1), st, basic=24000, ot_pay=0, payable_days=26)["esi_covered"]
     low = payroll.esi_contribution(emp, st, basic=4000, ot_pay=0, payable_days=26)          # 153.85 a day
     assert low["esi"] == 0 and low["esi_employer"] == 130 and "no employee share" in low["esi_note"]
-    assert payroll.esi_contribution(emp, dict(st, esi_mode="ticked"), basic=15000, ot_pay=0, payable_days=26)["esi"] == 0
-    assert payroll.esi_contribution({"esi_enabled": 1}, dict(st, esi_mode="ticked"), basic=15000, ot_pay=0, payable_days=26)["esi"] == 113
+    assert payroll.esi_contribution({"esi_enabled": 0}, st, basic=15000, ot_pay=0, payable_days=26)["esi"] == 0   # unticked: no ESI
+    assert payroll.esi_contribution({"esi_enabled": 0}, dict(st, esi_mode="all"), basic=15000, ot_pay=0, payable_days=26)["esi"] == 0
     # covered at the start of the period: continues even above the ceiling
     cont = payroll.esi_contribution(emp, st, basic=26000, ot_pay=0, payable_days=26, covered=True)
     assert cont["esi"] == 195 and "start of the contribution period" in cont["esi_note"]
@@ -618,7 +618,7 @@ def test_esi_contribution_periods():
 
 def test_salary_components_esi_pf_and_bank():
     on = dict(S, salary_components="1")
-    emp = {"salary_type": "monthly", "salary_rate": 30000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 1, "esi_enabled": 0,
+    emp = {"salary_type": "monthly", "salary_rate": 30000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 1, "esi_enabled": 1,
            "comp_hra": 10000, "comp_conveyance": 5000, "comp_other": 0, "pay_mode": "esi"}
     s = {"payable_days": 30, "std_min": 480, "worked_min": 0, "ot_min": 0, "paid_off_days": 0}
     p = payroll.calculate(emp, s, "2026-11", on)                     # November: 30 days

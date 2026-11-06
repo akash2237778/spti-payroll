@@ -63,9 +63,7 @@
   the next rupee; no employee share when the average daily wage is at or below the low-wage limit (the employer still pays).
   An establishment with 10 or more employees must cover every eligible employee.</p>
   <div class="form-grid">
-  <div><label>ESI applies to</label><select name="esi_mode">
-    <option value="all" {{ 'selected' if s.get('esi_mode', 'all') != 'ticked' }}>All employees (covered establishment)</option>
-    <option value="ticked" {{ 'selected' if s.get('esi_mode') == 'ticked' }}>Only employees with ESI ticked</option></select></div>
+  <div><label>ESI applies to</label><p class="small" style="margin:4px 0">Only employees with <b>ESI ticked</b> on their profile. Unticked = no ESI deducted.</p></div>
   <div><label>Employee ESI %</label><input name="esi_rate" value="{{ s.esi_rate }}"></div>
   <div><label>Employer ESI %</label><input name="esi_employer_rate" value="{{ s.get('esi_employer_rate', '3.25') }}"></div>
   <div><label>ESI wage ceiling ({{ cur }})</label><input name="esi_gross_ceiling" value="{{ s.esi_gross_ceiling }}"></div>

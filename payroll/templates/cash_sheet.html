@@ -20,8 +20,8 @@ A difference can be carried into {{ next_month }}: short-paid is added as an all
       <td>{{ loop.index }}</td><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td>
       <td class="n">{{ r.pay.net|money }}</td><td class="n">{{ r.pay.get('bank', 0)|money }}</td><td class="n">{{ r.pay.get('cash', 0)|money }}</td>
       <td class="n {{ 'edited' if cp and r.cash_diff }}"><input type="hidden" name="eid" value="{{ r.emp.id }}" form="paidform">
-        <input class="paid" name="paid_{{ r.emp.id }}" form="paidform" type="number" step="any" min="0" style="width:100px;text-align:right"
-               value="{{ '%g'|format(cp.paid_amount) if cp else '' }}" placeholder="{{ r.pay.get('cash', 0)|round|int }}" {{ 'readonly' if cp and cp.carried_month }}></td>
+        <input class="paid" name="paid_{{ r.emp.id }}" form="paidform" inputmode="decimal" style="width:100px;text-align:right"
+               value="{{ cp.paid_amount|amt if cp else '' }}" placeholder="{{ r.pay.get('cash', 0)|round|int }}" {{ 'readonly' if cp and cp.carried_month }}></td>
       <td class="n">{% if cp %}{% if r.cash_diff %}<b style="color:{{ 'var(--bad)' if r.cash_diff < 0 else 'var(--warn)' }}">{{ '%+.2f'|format(r.cash_diff) }}</b>
           {% if cp.carried_month %}<div class="small muted">carried to {{ cp.carried_month }}</div>
           {% else %}<button class="light small noprint" form="carry{{ r.emp.id }}" title="Carry into next month's pay">→ {{ next_month }}</button>{% endif %}
