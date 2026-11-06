@@ -14,12 +14,16 @@
   </form>
   {% endif %}
   <table style="margin-top:10px">
-    <tr><th>Shift</th><th>From</th><th>To</th><th>Reason</th><th>By</th><th></th></tr>
+    <tr><th>Shift</th><th>From</th><th>To</th><th>Actually applies on</th><th>Reason</th><th>By</th><th></th></tr>
     {% for h in history %}
-    <tr><td><b>{{ h.shift_name }}</b> <span class="small muted">{{ h.start_time }}–{{ h.end_time }}</span></td><td>{{ h.from_date }}</td><td>{{ h.to_date or 'onwards' }}</td>
+    <tr class="{{ 'muted' if not h.in_effect }}" style="{{ 'text-decoration:line-through' if not h.in_effect }}"><td><b>{{ h.shift_name }}</b> <span class="small muted">{{ h.start_time }}–{{ h.end_time }}</span></td><td>{{ h.from_date }}</td><td>{{ h.to_date or 'onwards' }}</td>
+      <td class="small" style="text-decoration:none">{% if not h.in_effect %}<span class="badge bad">not in effect</span> fully replaced by the later
+          {% for n in h.replaced_by %}{{ n.shift_name }} {{ n.from_date }} → {{ n.to_date or 'onwards' }}{{ ', ' if not loop.last }}{% endfor %} entry
+        {% else %}{% for a, b in h.in_effect %}{{ a }} → {{ b or 'onwards' }}{{ ', ' if not loop.last }}{% endfor %}
+          {% if h.replaced_by %}<br><span class="muted">other dates replaced by later entries</span>{% endif %}{% endif %}</td>
       <td class="small">{{ h.reason }}</td><td class="small muted">{{ h.created_by }} {{ h.created_at[:16] }}</td>
       <td>{% if can_edit %}<form method="post" action="{{ url_for('employee_shifts', eid=emp.id) }}" class="inline" onsubmit="return confirm('Remove this shift change?')">{{ csrf_field() }}
         <input type="hidden" name="back" value="{{ request.full_path }}"><input type="hidden" name="delete" value="{{ h.id }}"><button class="danger small">Remove</button></form>{% endif %}</td></tr>
-    {% else %}<tr><td colspan="6" class="muted">No shift changes. Default shift from the employee profile applies every day.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="7" class="muted">No shift changes. Default shift from the employee profile applies every day.</td></tr>{% endfor %}
   </table>
 </details>

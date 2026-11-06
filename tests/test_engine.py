@@ -681,3 +681,17 @@ def test_lone_punch_on_weekly_off_is_not_sandwiched_and_is_flagged():
 
 def test_default_late_penalty_is_flat_30():
     assert engine.suggest_penalty(5, S) == 30 and engine.suggest_penalty(55, S) == 30
+
+
+
+def test_shift_list_shows_where_each_change_applies():
+    from payroll.app import shift_effective
+    rows = [{"id": 1, "from_date": "2026-10-03", "to_date": "2026-10-28"},
+            {"id": 2, "from_date": "2026-10-04", "to_date": "2026-11-11"},
+            {"id": 3, "from_date": "2026-10-12", "to_date": None},
+            {"id": 4, "from_date": "2026-10-01", "to_date": "2026-10-31"}]
+    r = {x["id"]: x for x in shift_effective([dict(x) for x in rows])}
+    assert r[1]["in_effect"] == [] and [n["id"] for n in r[1]["replaced_by"]] == [4]      # fully hidden
+    assert r[2]["in_effect"] == [] and {n["id"] for n in r[2]["replaced_by"]} == {3, 4}
+    assert r[3]["in_effect"] == [("2026-11-01", None)]
+    assert r[4]["in_effect"] == [("2026-10-01", "2026-10-31")] and r[4]["replaced_by"] == []

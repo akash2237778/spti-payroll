@@ -484,9 +484,39 @@ def employee_edit(eid):
 
 
 def shift_history(eid):
-    return g.conn.execute("""SELECT a.*, s.name AS shift_name, s.start_time, s.end_time FROM employee_shifts a
+    rows = [dict(r) for r in g.conn.execute("""SELECT a.*, s.name AS shift_name, s.start_time, s.end_time FROM employee_shifts a
                              JOIN shifts s ON s.id = a.shift_id WHERE a.employee_id = ? ORDER BY a.from_date DESC, a.id DESC""",
-                          (eid,)).fetchall()
+                          (eid,))]
+    return shift_effective(rows)
+
+
+def shift_effective(rows):
+    """Where dates overlap the newest entry wins: work out, for each entry, the date ranges where it still applies.
+    Adds row['in_effect'] = [(from, to|None), ...] and row['replaced_by'] = newer entries that hide part of it."""
+    def d(s):
+        return dt.date.fromisoformat(s)
+    newest_first = sorted(rows, key=lambda r: r["id"], reverse=True)
+    for r in rows:
+        a = d(r["from_date"])
+        b = d(r["to_date"]) if r["to_date"] else None
+        newer = [n for n in newest_first if n["id"] > r["id"]]
+        pieces, hidden_by = [(a, b)], []
+        for n in newer:
+            na, nb = d(n["from_date"]), (d(n["to_date"]) if n["to_date"] else None)
+            out = []
+            for pa, pb in pieces:
+                if (nb is not None and nb < pa) or (pb is not None and na > pb):
+                    out.append((pa, pb)); continue           # no overlap
+                if n not in hidden_by:
+                    hidden_by.append(n)
+                if na > pa:
+                    out.append((pa, na - dt.timedelta(days=1)))
+                if nb is not None and (pb is None or nb < pb):
+                    out.append((nb + dt.timedelta(days=1), pb))
+            pieces = out
+        r["in_effect"] = [(pa.isoformat(), pb.isoformat() if pb else None) for pa, pb in sorted(pieces)]
+        r["replaced_by"] = hidden_by
+    return rows
 
 
 def _ensure_range_unlocked(from_date, to_date):
