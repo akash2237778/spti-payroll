@@ -1084,7 +1084,9 @@ def _exception_items(rows):
             if d["override"]:
                 continue
             kind = reason = None
-            if d["status"] == "MP":
+            if d.get("mp_on_off"):
+                kind, reason = "mp", "Missing punch on weekly off / holiday (paid as off day; add the other punch for overtime)"
+            elif d["status"] == "MP":
                 kind, reason = "mp", "Missing punch"
             elif "unpaired punch" in d["flags"]:
                 kind, reason = "mp", "Extra unpaired punch"

@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import st, csrf_field, sort_toggle with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, csrf_field, sort_toggle, day_st with context %}
 {% block title %}Today{% endblock %}
 {% block body %}
 <h1>Attendance for {{ day.strftime('%a, %d %b %Y') }}
@@ -46,7 +46,7 @@
   <tr>
     <td>{{ e.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=e.id, month=day.strftime('%Y-%m')) }}">{{ e.name }}</a></td>
     <td class="small">{{ e.department }}</td>
-    <td>{{ st(r.status, r.override or (e.id, day) in edited) }} {% for f in r.flags %}<span class="badge warn">{{ f }}</span>{% endfor %}</td>
+    <td>{{ day_st(r, r.override or (e.id, day) in edited) }} {% for f in r.flags %}<span class="badge warn">{{ f }}</span>{% endfor %}</td>
     <td>{{ r['in'].strftime('%H:%M') if r['in'] else '' }}</td><td>{{ r.out.strftime('%H:%M') if r.out else '' }}</td>
     <td class="n">{{ fmt_min(r.worked_min) if r.worked_min else '' }}</td>
     <td class="n">{{ r.late_min ~ 'm' if r.late_min else '' }}</td><td class="n">{{ r.early_min ~ 'm' if r.early_min else '' }}</td>

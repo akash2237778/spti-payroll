@@ -398,6 +398,9 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
         credit = {"absent": 0.0, "half": 0.5, "full": 1.0}.get(policy, 0.5)
         rec["status"] = "MP"
         if is_off_day:
+            # The day is paid as the weekly off / holiday; the lone punch adds nothing until the other punch is fixed.
+            rec["status"] = "H" if holiday is not None else "WO"
+            rec["mp_on_off"] = True
             rec["off_kind"] = "holiday" if holiday is not None else "wo"
             rec["off_credit"] = 1.0 if (holiday is None or holiday["paid"]) else 0.0
             # Paid as an extra day only in "extra_day" mode; in "ot" mode the hours become OT once the punch is fixed.
@@ -671,7 +674,7 @@ def apply_sandwich(days, settings, before=(), after=()):
     first = len(before)
     for i in range(first, first + len(days)):
         r = seq[i]
-        if r["status"] in ("WO", "H") and not r["override"]:
+        if r["status"] in ("WO", "H") and not r["override"] and not r.get("mp_on_off"):   # came in: not sandwiched
             prev = next((x for x in reversed(seq[:i]) if x["status"] not in ("WO", "H")), None)
             nxt = next((x for x in seq[i + 1:] if x["status"] not in ("WO", "H")), None)
             if prev and nxt and prev["status"] in off_days and nxt["status"] in off_days:

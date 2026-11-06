@@ -29,7 +29,7 @@
       <th class="n">OT</th><th class="n">Late pen.</th><th class="n" title="Left early but given a full day: minutes taken off OT">Short</th><th class="n">Day credit</th><th>Notes</th></tr>
     {% for d in r.days %}
     <tr class="{{ 'off' if d.status in ('WO','H','-') }}">
-      <td>{{ d.date.strftime('%d') }}</td><td>{{ d.date.strftime('%a') }}</td><td>{{ d.shift.name if d.shift else '' }}</td><td><b>{{ d.status }}</b></td>
+      <td>{{ d.date.strftime('%d') }}</td><td>{{ d.date.strftime('%a') }}</td><td>{{ d.shift.name if d.shift else '' }}</td><td><b>{{ d.status }}</b>{{ ' +MP' if d.get('mp_on_off') }}</td>
       <td>{{ d['in'].strftime('%H:%M') if d['in'] else '' }}</td>
       <td>{{ d.out.strftime('%H:%M') if d.out else '' }}{{ ' +1' if d.out and d.out.date() > d.date }}</td>
       <td class="n">{{ fmt_min(d.worked_min) if d.worked_min else '' }}</td>

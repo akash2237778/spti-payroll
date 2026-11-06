@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import st, monthnav, csrf_field, sort_toggle with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, csrf_field, sort_toggle, day_st with context %}
 {% block title %}Exceptions {{ month }}{% endblock %}
 {% block body %}
 <h1>Attendance exceptions {{ sort_toggle() }} {{ monthnav('exceptions', month, prev, nxt, kind=kind) }}</h1>
@@ -27,7 +27,7 @@ Only what the system can't be sure about is listed here. Each fix re-pairs all l
     <td>{% if admin and d.suggest and it.orphan %}<input type="checkbox" form="bulk" name="pick"
           value="{{ e.id }}|{{ d.suggest.ts.strftime('%Y-%m-%d %H:%M:%S') }}|{{ d.suggest.role }}|{{ it.orphan.ids[0] }}|{{ d.suggest.orphan_role }}">
         {% elif admin and it.long %}<input type="checkbox" form="bulk" name="pick_long" value="{{ e.id }}|{{ it.long.ids[0] }}|{{ it.long.ids[-1] }}">{% endif %}</td>
-    <td>{{ d.date.strftime('%d %b') }} {{ d.date.strftime('%a') }}</td><td>{{ e.device_user_id }} · {{ e.name }}</td><td>{{ st(d.status, d.override) }}</td>
+    <td>{{ d.date.strftime('%d %b') }} {{ d.date.strftime('%a') }}</td><td>{{ e.device_user_id }} · {{ e.name }}</td><td>{{ day_st(d, d.override) }}</td>
     <td class="small">{% for s in d.sessions %}{{ s.start.strftime('%H:%M') }}→{{ s.end.strftime('%d %H:%M') if s.end else '??' }}{{ ', ' if not loop.last }}{% endfor %}</td>
     <td>{{ it.reason }}</td>
     <td class="small">{% if d.suggest %}add <b>{{ d.suggest.role|upper }}</b> {{ d.suggest.ts.strftime('%d %b %H:%M') }}{% endif %}</td>

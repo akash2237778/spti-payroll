@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, sort_toggle with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, sort_toggle, day_st with context %}
 {% block title %}Muster roll {{ month }}{% endblock %}
 {% block body %}
 <h1>Monthly muster roll {{ monthnav('att_monthly', month, prev, nxt) }} {{ sort_toggle() }}
@@ -25,7 +25,7 @@
     <td class="name"><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.device_user_id }} · {{ r.emp.name }}</a></td>
     {% for d in r.days %}{% set tip = (d.shift.name ~ ' shift · ' if d.shift_changed else '') ~ STATUS_LABELS.get(d.status, '')
         ~ (' ' ~ d['in'].strftime('%H:%M') if d['in'] else '') ~ (' - ' ~ d.out.strftime('%H:%M') if d.out else '')
-        ~ (' (' ~ fmt_min(d.worked_min) ~ ')' if d.worked_min else '') %}<td><a href="{{ url_for('att_day', eid=r.emp.id, date=d.date.isoformat(), back=request.full_path) }}">{{ st(d.status, d.override or (r.emp.id, d.date) in edited, tip) }}{% if d.shift_changed %}<sup class="small" title="{{ d.shift.name }} shift">{{ d.shift.name[:1] }}</sup>{% endif %}</a></td>{% endfor %}
+        ~ (' (' ~ fmt_min(d.worked_min) ~ ')' if d.worked_min else '') %}<td><a href="{{ url_for('att_day', eid=r.emp.id, date=d.date.isoformat(), back=request.full_path) }}">{{ day_st(d, d.override or (r.emp.id, d.date) in edited, tip) }}{% if d.shift_changed %}<sup class="small" title="{{ d.shift.name }} shift">{{ d.shift.name[:1] }}</sup>{% endif %}</a></td>{% endfor %}
     <td>{{ s.get('cnt_P',0)|days }}</td><td>{{ s.get('cnt_HD',0)|days }}</td><td>{{ s.get('cnt_A',0)|days }}</td><td>{{ s.get('cnt_WO',0)|days }}</td>
     <td>{{ s.get('cnt_WOP',0)|days }}</td><td>{{ s.get('cnt_MP',0)|days }}</td><td>{{ s.get('late_count',0)|days }}</td>
     {% set ed = s.get('edited', {}) %}<td class="{{ 'edited' if ed.payable_days }}" title="{{ ('edited, calculated ' ~ (s.calc_payable_days|days)) if ed.payable_days }}"><b>{{ s.payable_days|days }}</b></td><td>{{ fmt_min(s.worked_min) }}</td><td class="{{ 'edited' if ed.ot_min }}" title="{{ ('edited, calculated ' ~ fmt_min(s.calc_ot_min)) if ed.ot_min }}">{{ fmt_min(s.ot_min) }}</td>

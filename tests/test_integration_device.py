@@ -688,3 +688,12 @@ def test_end_to_end(client):
     assert f'id="pl{d20["date"].day}" hidden class="punch-list-row"' in pg20 and f"{len(d20['punches'])} punches ▾" in pg20
     for t in d20["punches"]:
         assert t.strftime("%H:%M:%S") in pg20
+
+    # 21. a lone punch on a Sunday shows as WO + MP and is listed on Exceptions
+    with db.tx() as conn:
+        p21 = conn.execute("SELECT id FROM employees WHERE device_user_id='10'").fetchone()["id"]
+        d21 = next(d for d in pr.compute_month(conn, "2026-10", employee_ids={p21})[0]["days"] if d["date"].day == 25)
+    if len(d21["punches"]) == 1:          # real data: Pappu punched once on Sun 25 Oct
+        assert d21["status"] == "WO" and d21["mp_on_off"]
+        assert "mp-tag" in c.get(f"/attendance/employee/{p21}?month=2026-10").data.decode()
+        assert "Missing punch on weekly off" in c.get("/exceptions?month=2026-10&kind=mp").data.decode()

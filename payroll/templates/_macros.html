@@ -17,3 +17,6 @@
   <a class="btn small {{ 'light' if by_status or emp_sort != 'name' }}" href="{{ url_with(sort='name', order='list') if status else url_with(sort='name') }}">Name A–Z</a>
   {% if status %}<a class="btn small {{ '' if by_status else 'light' }}" href="{{ url_with(order='status') }}">Present first</a>{% endif %}</span>
 {% endmacro %}
+{% macro day_st(d, ov=False, title='') -%}
+{{ st(d.status, ov, title) }}{% if d.get('mp_on_off') %}<span class="st st-MP mp-tag" title="Only one punch on this {{ 'holiday' if d.status == 'H' else 'weekly off' }}: the day is paid as {{ 'the holiday' if d.status == 'H' else 'the weekly off' }}; the punch adds nothing until the other punch is added">+MP</span>{% endif %}
+{%- endmacro %}

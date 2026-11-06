@@ -1,4 +1,4 @@
-{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field with context %}
+{% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, day_st with context %}
 {% block title %}{{ emp.name }} {{ month }}{% endblock %}
 {% block body %}
 {% set s = row.summary %}{% set p = row.pay %}
@@ -47,7 +47,7 @@
   <tr id="d{{ d.date.day }}" class="{{ 'multi-entry' if n_punch > 2 }}">
     <td>{{ d.date.strftime('%d %b') }}</td><td>{{ d.date.strftime('%a') }}</td>
     <td class="small">{% if d.shift %}<span class="badge {{ 'warn' if d.shift_changed }}" title="{{ d.shift.start_time }}–{{ d.shift.end_time }}">{{ d.shift.name }}</span>{% endif %}</td>
-    <td>{{ st(d.status, d.override or (emp.id, d.date) in edited) }}{% if (emp.id, d.date) in edited %} <a class="small" href="{{ url_for('changes_view', month=month, eid=emp.id) }}" title="Changed from machine data - see Changes">✎</a>{% endif %}</td>
+    <td>{{ day_st(d, d.override or (emp.id, d.date) in edited) }}{% if (emp.id, d.date) in edited %} <a class="small" href="{{ url_for('changes_view', month=month, eid=emp.id) }}" title="Changed from machine data - see Changes">✎</a>{% endif %}</td>
     <td>{{ d['in'].strftime('%H:%M') if d['in'] else '' }}</td>
     <td>{{ d.out.strftime('%H:%M') if d.out else '' }}{{ ' (+1)' if d.out and d.out.date() > d.date }}</td>
     <td class="n">{{ fmt_min(d.worked_min) if d.worked_min else '' }}</td>

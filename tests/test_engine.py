@@ -74,8 +74,9 @@ def test_weekly_off_and_work_on_it():
     # Company rule (default): Sunday stays a paid weekly off; hours worked on it are overtime, no extra day.
     r = ev([t(9), t(17)], weekly_off=True)
     assert r["status"] == "WOP" and r["off_credit"] == 1 and r["extra_credit"] == 0 and r["ot_min"] == 450
-    r = ev([t(9)], weekly_off=True)   # forgot to punch out on Sunday: no extra day either
-    assert r["status"] == "MP" and r["extra_credit"] == 0
+    r = ev([t(9)], weekly_off=True)   # forgot to punch out on Sunday: paid as the weekly off, no extra day
+    assert r["status"] == "WO" and r["mp_on_off"] and r["off_credit"] == 1 and r["extra_credit"] == 0
+    assert "missing punch" in r["flags"] and r["work_credit"] == 0
     # Optional alternative: an extra day's wage
     r = engine.evaluate_day(D, [t(9), t(17)], SHIFT, dict(S, wo_work_mode="extra_day"), weekly_off=True, today=TODAY)
     assert r["extra_credit"] == 0.5
@@ -651,3 +652,14 @@ def test_gate_pass_personal_and_official():
     r = engine.evaluate_day(D, [t(9), t(14)], SHIFT8H, S, today=TODAY,
                             gate_passes=[gp(out_time="14:00")])                       # personal, punched out: nothing extra
     assert r.get("gate_personal_min", 0) == 0 and r["worked_min"] == 270
+
+
+
+def test_lone_punch_on_weekly_off_is_not_sandwiched_and_is_flagged():
+    sat, sun, mon = dt.date(2026, 10, 24), dt.date(2026, 10, 25), dt.date(2026, 10, 26)   # 25 Oct 2026 = Sunday
+    days = [engine.evaluate_day(sat, [], SHIFT, S, today=TODAY),
+            engine.evaluate_day(sun, [t(9, 9, sun)], SHIFT, S, weekly_off=True, today=TODAY),
+            engine.evaluate_day(mon, [], SHIFT, S, today=TODAY)]
+    s = engine.summarize(days, SHIFT, S, "monthly")
+    assert days[1]["status"] == "WO" and days[1]["mp_on_off"] and "sandwich" not in " ".join(days[1]["flags"])
+    assert s["payable_days"] == 1 and s.get("cnt_MP", 0) == 0 and s["cnt_WO"] == 1 and s["missing_punch"] == 1

@@ -204,3 +204,6 @@ tr.punch-list-row > td { background: #fbfaff; padding: 8px 14px 12px; }
 .punch-list li { padding: 3px 0; }
 .punch-list .pt { font-variant-numeric: tabular-nums; font-weight: 600; margin-right: 6px; }
 @media print { tr.punch-list-row[hidden] { display: none; } }
+
+/* lone punch on a paid weekly off / holiday */
+.st.mp-tag { min-width: 0; margin-left: 2px; padding: 1px 3px; font-size: 10px; }
