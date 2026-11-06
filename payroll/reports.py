@@ -69,7 +69,7 @@ def calc_lines(row, settings, cur="₹"):
         if s.get("late_penalty_min"):
             parts.append(f"{engine.fmt_min(s['late_penalty_min'])} late penalty ({num(s.get('late_penalty_days', 0))} day(s))")
         if s.get("early_short_min"):
-            parts.append(f"{engine.fmt_min(s['early_short_min'])} short on early-leave full days ({num(s.get('early_short_days', 0))} day(s))")
+            parts.append(f"{engine.fmt_min(s['early_short_min'])} short on 6–8 h full days ({num(s.get('early_short_days', 0))} day(s))")
         lines.append(("Overtime hours", " − ".join(parts), engine.fmt_min(s["ot_min"])))
         if s.get("late_penalty_unrecovered_min"):
             lines.append(("", f"deductions larger than OT; {engine.fmt_min(s['late_penalty_unrecovered_min'])} not recovered (OT cannot go below 0)", ""))
@@ -232,7 +232,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
     head = ["Date", "Day", "Shift", "Status", "In", "Out", "Worked min", "Late min", "Early min", "OT min", "Late penalty min",
             "Work credit", "Extra credit", "Weekly-off credit", "Holiday credit", "Leave credit", "Notes",
             "OT starts after (min)", "Break min", "Break after min", "OT after min", "OT block min", "Lunch from", "Lunch to",
-            "Early-leave short min"]
+            "Short-day min (OT −)"]
     H = 14
     _hdr(ws, H, head)
     ws.row_dimensions[H].height = 30
@@ -250,7 +250,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
             ws.cell(row=r, column=5, value=d["in"]).number_format = "dd-mmm hh:mm"
         if d["out"]:
             ws.cell(row=r, column=6, value=d["out"]).number_format = "dd-mmm hh:mm"
-        ws.cell(row=r, column=18, value=engine.ot_base_minutes(sh, paid_break))
+        ws.cell(row=r, column=18, value=d.get("ot_base_min") or engine.ot_base_minutes(sh, paid_break))
         if sh.get("break_start") and d["in"]:
             lw = engine.dt.datetime.combine(d["in"].date(), engine.parse_hm(sh["break_start"]))
             ws.cell(row=r, column=23, value=lw).number_format = "dd-mmm hh:mm"

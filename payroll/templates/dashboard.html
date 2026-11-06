@@ -1,11 +1,12 @@
 {% extends "base.html" %}{% from "_macros.html" import st, csrf_field, sort_toggle with context %}
-{% block title %}Today{% endblock %}
+{% block title %}Today<style>.grp-head td { background: #eef2f6; border-top: 2px solid #c8d0d9; padding-top: 8px; }</style>
+{% endblock %}
 {% block body %}
 <h1>Attendance for {{ day.strftime('%a, %d %b %Y') }}
   <span class="nav-month"><a class="btn light small" href="{{ url_for('dashboard', date=prev) }}">&larr;</a>
   <form class="inline"><input type="date" name="date" value="{{ day.isoformat() }}" onchange="this.form.submit()"></form>
   <a class="btn light small" href="{{ url_for('dashboard', date=nxt) }}">&rarr;</a></span>
-  {{ sort_toggle() }}
+  {{ sort_toggle(status=True) }}
   {% if holiday %}<span class="badge {{ 'ok' if holiday.paid else '' }}">{{ 'Paid' if holiday.paid else 'Unpaid' }} holiday: {{ holiday.name }}</span>
   {% elif can_edit %}
   <form method="post" action="{{ url_for('holidays', year=day.year) }}" class="inline noprint" onsubmit="var n = prompt('Holiday name', 'National holiday'); this.elements['name'].value = n || ''; return !!n">
@@ -39,6 +40,10 @@
 <div class="scroll"><table>
   <tr><th>ID</th><th>Name</th><th>Dept</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th>Punches</th><th></th></tr>
   {% for e, r in rows %}
+  {% set gk = groups[loop.index0] %}
+  {% if today_order == 'status' and (loop.first or gk != groups[loop.index0 - 1]) %}
+  <tr class="grp-head"><td colspan="12"><b>{{ gk[1] }}</b> <span class="muted">({{ group_counts[gk] }})</span></td></tr>
+  {% endif %}
   <tr>
     <td>{{ e.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=e.id, month=day.strftime('%Y-%m')) }}">{{ e.name }}</a></td>
     <td class="small">{{ e.department }}</td>
@@ -52,4 +57,5 @@
   </tr>
   {% endfor %}
 </table></div>
+<style>.grp-head td { background: #eef2f6; border-top: 2px solid #c8d0d9; padding-top: 8px; }</style>
 {% endblock %}

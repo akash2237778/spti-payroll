@@ -32,11 +32,12 @@
     <label class="chk"><input type="checkbox" name="sandwich_rule" {{ 'checked' if s.sandwich_rule=='1' }}> Sandwich rule: Sunday / holiday not paid when the working days on both sides are off (e.g. Saturday and Monday absent)</label>
     <label class="chk"><input type="checkbox" name="sandwich_paid_leave" {{ 'checked' if s.sandwich_paid_leave=='1' }}> …also when those days are paid leave</label></div>
 </div></div>
-<div class="card"><h2>Early leave</h2>
-  <p class="small muted" style="margin-top:0">Leaving after this time but before the shift ends still counts as a <b>full day</b>
-  (if at least the half-day hours were worked); the hours short of the standard day are taken off that month's overtime
-  (never below zero, never from salary; not for hourly staff). Example: 09:00–15:00 = full day, 2:30 less overtime. Blank = off.</p>
-  <div class="form-grid"><div><label>Full day if leaving after</label><input type="time" name="early_leave_full_day_after" value="{{ s.early_leave_full_day_after }}"></div></div>
+<div class="card"><h2>Short days (by hours worked)</h2>
+  <p class="small muted" style="margin-top:0">Uses each shift's <b>full day</b> and <b>half day</b> hours (Shifts page; General: full day from 6 h, half day from 4 h, standard 8 h):
+  <b>6 h – 8 h</b> worked = full day, the hours short of 8 h are taken off that month's overtime (never below zero, never from salary, not for hourly staff);
+  <b>4 h – 6 h</b> = half day, the time worked beyond 4 h is paid as overtime; under 4 h = absent.
+  Example: 09:00–16:00 (6:30) = full day, 1:30 less OT; 09:00–14:00 (4:30) = half day + 0:30 OT.</p>
+  <label class="chk"><input type="checkbox" name="short_day_rule" {{ 'checked' if s.get('short_day_rule', '1') == '1' }}> Apply this rule</label>
 </div>
 <div class="card"><h2>Late-comer penalty — suggested minutes</h2>
   <p class="small muted" style="margin-top:0">The penalty is <b>chosen day by day on each employee's sheet</b> (Attendance → employee → "Late penalty" column).

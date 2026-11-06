@@ -368,19 +368,20 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
             rec["ot_min"] = int(mins // block * block)
         else:
             set_ot(ot_base)
+            rec["ot_base_min"] = ot_base
         rec["late_min"] = rec["early_min"] = 0
         return rec
 
-    # Early leave (company rule): leaving after the cut-off (e.g. 14:00) but before the shift end still earns a
-    # full day; the minutes short of the standard day are taken off the month's overtime (see summarize).
-    cut = settings.get("early_leave_full_day_after") or ""
-    if cut and complete and not double:
-        cut_dt = dt.datetime.combine(work_date, parse_hm(cut))
-        last_out = complete[-1]["end"]
-        if s_start < cut_dt < s_end and cut_dt < last_out < s_end and int(shift["half_day_min"]) <= mins < std:
-            work_credit = 1.0
+    # Working-hours rule (company rule), applies whenever the shift is not fully worked:
+    #   full-day hours (e.g. 6 h) up to the standard day (e.g. 8 h) -> full day; the minutes short of the standard
+    #   day are taken off the month's overtime (see summarize).
+    #   half-day hours (e.g. 4 h) up to full-day hours -> half day; time worked beyond the half day is overtime.
+    if settings.get("short_day_rule", "1") == "1" and complete and not double:
+        if int(shift["full_day_min"]) <= mins < std:
             rec["early_short_min"] = std - mins
-            rec["flags"].append(f"left early: full day, {fmt_min(std - mins)} from OT")
+            rec["flags"].append(f"short day: full day, {fmt_min(std - mins)} from OT")
+        elif work_credit == 0.5:
+            ot_base = int(shift["half_day_min"])
 
     rec["work_credit"] = work_credit
     rec["extra_credit"] = bonus_credit
@@ -388,6 +389,9 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
     if work_credit == 0.0:
         rec["flags"].append("too short")
     set_ot(ot_base)
+    rec["ot_base_min"] = ot_base
+    if work_credit == 0.5 and ot_base == int(shift["half_day_min"]) and rec["ot_min"]:
+        rec["flags"].append(f"half day: {fmt_min(rec['ot_min'])} as OT")
     return rec
 
 

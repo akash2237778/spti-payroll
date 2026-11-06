@@ -122,9 +122,9 @@ DEFAULT_SETTINGS = {
     # Late penalty is chosen day by day on each employee's sheet; these only pre-fill the suggested minutes.
     "late_penalty_per_mark_min": "0",   # fixed OT minutes suggested per late day
     "late_penalty_factor": "1",         # plus this multiple of the minutes late
-    # Company rule: leaving after this time (and before shift end) still earns a full day; the missing
-    # hours are taken off the month's overtime. Blank = off.
-    "early_leave_full_day_after": "14:00",
+    # Company rule, by hours worked: full-day hours..standard day -> full day, shortfall taken off OT;
+    # half-day hours..full-day hours -> half day, time beyond the half day paid as OT. "0" = off.
+    "short_day_rule": "1",
 }
 
 
@@ -166,17 +166,23 @@ def init_db():
         if not c.execute("SELECT 1 FROM shifts").fetchone():
             # Defaults derived from the real punch data: median in 09:02, median out ~20:20.
             # 8 working hours: 09:00-17:30 with unpaid lunch 13:00-13:30; work beyond that is overtime.
-            # Full day from 7h45 (8 h less the 15-min early-out grace).
+            # Full day from 6 h worked; 6-8 h shortfall is taken off overtime (short_day_rule).
             c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, break_start, grace_in_min,
                          grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
-                         VALUES ('General', '09:00', '17:30', 30, 300, '13:00', 15, 15, 465, 240, 30, 30, 5)""")
+                         VALUES ('General', '09:00', '17:30', 30, 300, '13:00', 15, 15, 360, 240, 30, 30, 5)""")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_sandwich_on'").fetchone():
             # Company rule (owner, 2026-11-02): Sunday is not paid when Saturday and Monday are taken off.
             c.execute("UPDATE settings SET value='1' WHERE key='sandwich_rule'")
             c.execute("INSERT INTO settings(key, value) VALUES ('migrated_sandwich_on', '1')")
+        if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_hours_rule'").fetchone():
+            # Owner, 2026-11-06: < 6 h worked = half day (rest as OT); 6-8 h = full day (shortfall from OT).
+            # Replaces the "left after 14:00" rule. Only an untouched General shift (full day 7h45) is moved.
+            c.execute("DELETE FROM settings WHERE key = 'early_leave_full_day_after'")
+            c.execute("UPDATE shifts SET full_day_min = 360 WHERE name = 'General' AND full_day_min = 465 AND half_day_min = 240")
+            c.execute("INSERT INTO settings(key, value) VALUES ('migrated_hours_rule', '1')")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_8h_day'").fetchone():
             # One-time move of an untouched old default General shift (09:00-20:30) to the 8-hour day.
-            c.execute("""UPDATE shifts SET end_time='17:30', break_start='13:00', full_day_min=465
+            c.execute("""UPDATE shifts SET end_time='17:30', break_start='13:00', full_day_min=360
                          WHERE name='General' AND start_time='09:00' AND end_time='20:30' AND break_min=30
                            AND full_day_min=480 AND half_day_min=240""")
             c.execute("INSERT INTO settings(key, value) VALUES ('migrated_8h_day', '1')")

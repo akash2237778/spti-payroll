@@ -255,6 +255,20 @@ def logout():
 
 # ------------------------------------------------------------------ dashboard
 
+PRESENCE_GROUPS = [(0, "Present"), (1, "Missing punch"), (2, "Absent / not in yet"), (3, "Off / holiday / leave")]
+
+
+def presence_group(r):
+    """(order, label) for the Today screen's 'Present first' sort."""
+    if r["status"] == "MP":
+        return PRESENCE_GROUPS[1]
+    if r["punches"] or r["status"] in ("P", "HD", "WOP", "HP"):
+        return PRESENCE_GROUPS[0]
+    if r["status"] in ("WO", "H", "L", "LWP"):
+        return PRESENCE_GROUPS[3]
+    return PRESENCE_GROUPS[2]
+
+
 @app.route("/")
 def dashboard():
     today = dt.date.today()
@@ -279,11 +293,24 @@ def dashboard():
             stats["late"] += 1
         if r["status"] == "MP":
             stats["missing"] += 1
+    # "Present first": group by attendance, keeping the ID / name order inside each group
+    want = request.args.get("order")
+    if want in ("status", "list"):
+        session["today_order"] = want
+    today_order = session.get("today_order", "list")
+    groups = [presence_group(r) for _, r in rows]
+    if today_order == "status":
+        order = sorted(range(len(rows)), key=lambda i: groups[i][0])
+        rows, groups = [rows[i] for i in order], [groups[i] for i in order]
+    group_counts = {}
+    for gk in groups:
+        group_counts[gk] = group_counts.get(gk, 0) + 1
     devices = g.conn.execute("SELECT * FROM devices").fetchall()
     last_punch = g.conn.execute("SELECT MAX(ts) FROM punches").fetchone()[0]
     total_punches = g.conn.execute("SELECT COUNT(*) FROM punches").fetchone()[0]
     holiday = g.conn.execute("SELECT * FROM holidays WHERE hdate = ?", (day.isoformat(),)).fetchone()
     return render_template("dashboard.html", rows=rows, stats=stats, day=day, devices=devices, holiday=holiday,
+                           today_order=today_order, groups=groups, group_counts=group_counts,
                            edited=edited_set(day, day),
                            last_punch=last_punch, total_punches=total_punches,
                            prev=(day - dt.timedelta(days=1)).isoformat(), nxt=(day + dt.timedelta(days=1)).isoformat())
@@ -1226,7 +1253,7 @@ def settings_view():
             for k in db.DEFAULT_SETTINGS:
                 if k in f:
                     g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, f[k].strip()))
-            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule", "sandwich_paid_leave"):
+            for k in ("weekly_off_paid_monthly", "weekly_off_paid_daily", "sandwich_rule", "sandwich_paid_leave", "short_day_rule"):
                 g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, "1" if f.get(k) else "0"))
             audit("settings_save", {k: f[k] for k in f if k != "csrf"})
             flash("Settings saved", "ok")

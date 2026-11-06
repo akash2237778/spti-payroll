@@ -10,8 +10,10 @@
 {% macro legend() %}
 <div class="legend small muted">{% for k in ['P','HD','A','MP','WO','WOP','H','HP','L','LWP'] %}<span>{{ st(k) }} {{ STATUS_LABELS[k] }}</span>{% endfor %}<span><span class="st ov">&nbsp;</span> Changed from machine data (<a href="{{ url_for('changes_view') }}">see Changes</a>)</span></div>
 {% endmacro %}
-{% macro sort_toggle() %}
-<span class="nav-month noprint small" title="Order employees by device ID or by name (remembered)">Sort:
-  <a class="btn small {{ '' if emp_sort == 'id' else 'light' }}" href="{{ url_with(sort='id') }}">ID</a>
-  <a class="btn small {{ '' if emp_sort == 'name' else 'light' }}" href="{{ url_with(sort='name') }}">Name A–Z</a></span>
+{% macro sort_toggle(status=False) %}
+{% set by_status = status and today_order == 'status' %}
+<span class="nav-month noprint small" title="Order employees (remembered)">Sort:
+  <a class="btn small {{ 'light' if by_status or emp_sort != 'id' }}" href="{{ url_with(sort='id', order='list') if status else url_with(sort='id') }}">ID</a>
+  <a class="btn small {{ 'light' if by_status or emp_sort != 'name' }}" href="{{ url_with(sort='name', order='list') if status else url_with(sort='name') }}">Name A–Z</a>
+  {% if status %}<a class="btn small {{ '' if by_status else 'light' }}" href="{{ url_with(order='status') }}">Present first</a>{% endif %}</span>
 {% endmacro %}

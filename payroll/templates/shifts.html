@@ -18,8 +18,8 @@ Punches before the "day starts at" hour count towards the previous day, so late 
     <div><label>Deduct break after (min worked, if no lunch time)</label><input type="number" name="break_after_min" value="{{ s.break_after_min if s else 300 }}"></div>
     <div><label>Late grace (min)</label><input type="number" name="grace_in_min" value="{{ s.grace_in_min if s else 15 }}"></div>
     <div><label>Early-out grace (min)</label><input type="number" name="grace_out_min" value="{{ s.grace_out_min if s else 15 }}"></div>
-    <div><label>Full day needs (hrs worked)</label><input type="number" step="0.25" name="full_day_hrs" value="{{ (s.full_day_min/60) if s else 8 }}"></div>
-    <div><label>Half day needs (hrs worked)</label><input type="number" step="0.25" name="half_day_hrs" value="{{ (s.half_day_min/60) if s else 4 }}"></div>
+    <div><label>Full day from (hrs worked; up to the standard day the shortfall comes off OT)</label><input type="number" step="0.25" name="full_day_hrs" value="{{ (s.full_day_min/60) if s else 8 }}"></div>
+    <div><label>Half day from (hrs worked; time beyond it is OT)</label><input type="number" step="0.25" name="half_day_hrs" value="{{ (s.half_day_min/60) if s else 4 }}"></div>
     <div><label>OT counted after extra (min)</label><input type="number" name="ot_after_min" value="{{ s.ot_after_min if s else 30 }}"></div>
     <div><label>OT rounding block (min)</label><input type="number" name="ot_round_min" value="{{ s.ot_round_min if s else 30 }}"></div>
     <div><label>Work day starts at (hour)</label><input type="number" min="0" max="23" name="day_start_hour" value="{{ s.day_start_hour if s else 5 }}"></div>

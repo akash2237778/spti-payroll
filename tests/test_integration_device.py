@@ -418,3 +418,11 @@ def test_end_to_end(client):
     assert names == sorted(names, key=str.lower), names[:5]
     ids = [int(x) for x in _re.findall(r'class="name"><a href="[^"]+">(\d+) · ', c.get("/attendance/monthly?month=2026-10&sort=id").data.decode())]
     assert ids == sorted(ids)
+
+    # 12. Today screen: "Present first" groups rows (present, missing punch, absent / not in yet, off / leave)
+    html = c.get("/?date=2026-10-27&order=status").data.decode()
+    heads = _re.findall(r'<tr class="grp-head"><td colspan="12"><b>([^<]+)</b>', html)
+    order = ["Present", "Missing punch", "Absent / not in yet", "Off / holiday / leave"]
+    assert heads and heads == [h for h in order if h in heads], heads
+    assert '<tr class="grp-head">' in c.get("/?date=2026-10-28").data.decode()        # remembered
+    assert '<tr class="grp-head">' not in c.get("/?date=2026-10-28&order=list").data.decode()
