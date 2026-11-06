@@ -716,7 +716,8 @@ def shifts():
     if request.method == "POST":
         require_edit()
         f = request.form
-        ints = ["break_min", "break_after_min", "grace_in_min", "grace_out_min", "ot_after_min", "ot_round_min", "day_start_hour"]
+        ints = ["break_min", "break_after_min", "grace_in_min", "grace_out_min", "ot_after_min", "ot_round_min", "ot_grace_min",
+                "day_start_hour"]
         vals = [f["name"], f["start_time"], f["end_time"]] + [int(f.get(k) or 0) for k in ints] + \
                [int(float(f.get("full_day_hrs") or 8) * 60), int(float(f.get("half_day_hrs") or 4) * 60)]
         cols = ["name", "start_time", "end_time"] + ints + ["full_day_min", "half_day_min", "break_start"]

@@ -220,6 +220,17 @@ def _override_session(work_date, ov):
 # Day evaluation
 # ------------------------------------------------------------------------------------------------
 
+def ot_grace(shift):
+    return max(0, int(shift.get("ot_grace_min") if shift.get("ot_grace_min") is not None else 5))
+
+
+def round_ot(minutes, shift):
+    """Overtime in whole blocks (e.g. 30 min); a block still counts when at most `ot_grace_min` short.
+    E.g. block 30, grace 5: 1:59 -> 2:00, 1:55 -> 2:00, 1:54 -> 1:30."""
+    block = int(shift["ot_round_min"] or 1) or 1
+    return int((minutes + ot_grace(shift)) // block * block)
+
+
 def _clock(work_date, hm, after=None):
     t = dt.datetime.combine(work_date, parse_hm(hm))
     if after is not None and t <= after:
@@ -345,9 +356,8 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
 
     def set_ot(base_minutes):
         extra = mins - base_minutes
-        if extra >= int(shift["ot_after_min"] or 0) and extra > 0:
-            block = int(shift["ot_round_min"] or 1) or 1
-            rec["ot_min"] = int(extra // block * block)
+        if extra > 0 and extra + ot_grace(shift) >= int(shift["ot_after_min"] or 0):
+            rec["ot_min"] = round_ot(extra, shift)
 
     # --- Manual status override wins -------------------------------------------------------
     if forced_status:
@@ -420,8 +430,7 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
         rec["extra_credit"] = work_credit + bonus_credit
         if settings.get("wo_work_mode") == "ot":
             rec["extra_credit"] = 0.0
-            block = int(shift["ot_round_min"] or 1) or 1
-            rec["ot_min"] = int(mins // block * block)
+            rec["ot_min"] = round_ot(mins, shift)
         else:
             set_ot(ot_base)
             rec["ot_base_min"] = ot_base

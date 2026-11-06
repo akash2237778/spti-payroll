@@ -261,7 +261,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
     head = ["Date", "Day", "Shift", "Status", "In", "Out", "Worked min", "Late min", "Early min", "OT min", "Late penalty min",
             "Work credit", "Extra credit", "Weekly-off credit", "Holiday credit", "Leave credit", "Notes",
             "OT starts after (min)", "Break min", "Break after min", "OT after min", "OT block min", "Lunch from", "Lunch to",
-            "Short-day min (OT −)"]
+            "Short-day min (OT −)", "OT grace min"]
     H = len(params) + 4   # day table starts below the settings block
     _hdr(ws, H, head)
     ws.row_dimensions[H].height = 30
@@ -302,7 +302,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
         formula_ot = (d["status"] in ("P", "HD") or (d["status"] in ("WOP", "HP") and not ot_mode)) \
             and not d["override"] and not (double and bonus > 0)
         if formula_ot:
-            ws.cell(row=r, column=10, value=f"=IF(AND(G{r}-R{r}>=U{r},G{r}-R{r}>0),FLOOR(G{r}-R{r},V{r}),0)")
+            ws.cell(row=r, column=10, value=f"=IF(AND(G{r}-R{r}+Z{r}>=U{r},G{r}-R{r}>0),FLOOR(G{r}-R{r}+Z{r},V{r}),0)")
         else:
             ws.cell(row=r, column=10, value=d["ot_min"])
         pen = ws.cell(row=r, column=11, value=d.get("late_penalty_min", 0))
@@ -315,7 +315,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
         notes = " ".join(filter(None, [d.get("holiday") or "", d.get("leave_type") or ""] + d["flags"]))
         ws.cell(row=r, column=17, value=notes)
         ws.cell(row=r, column=25, value=0 if p["salary_type"] == "hourly" else d.get("early_short_min", 0))
-        for c in range(1, 26):
+        ws.cell(row=r, column=26, value=engine.ot_grace(sh))
+        for c in range(1, 27):
             ws.cell(row=r, column=c).border = BOX
     last = first + len(days) - 1
     rng = lambda col: f"{col}{first}:{col}{last}"  # noqa: E731
@@ -416,7 +417,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
                    "bank_target", "bank", "cash", "esi_w", "esi_er", "hra_e", "conv_e", "oth_e", "basic_da"):
             c.number_format = "#,##0.00"
     widths = {"A": 36, "B": 14, "C": 9, "D": 7, "E": 14, "F": 14, "Q": 30}
-    for i in range(1, 26):
+    for i in range(1, 27):
         L = get_column_letter(i)
         ws.column_dimensions[L].width = widths.get(L, 9)
     ws.freeze_panes = f"E{first}"

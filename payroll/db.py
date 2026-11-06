@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS shifts (
     half_day_min INTEGER DEFAULT 240,     -- worked minutes needed for a half day
     ot_after_min INTEGER DEFAULT 30,      -- minimum extra minutes before OT counts
     ot_round_min INTEGER DEFAULT 30,      -- OT rounded down to this block
+    ot_grace_min INTEGER DEFAULT 5,       -- a block still counts when at most this many minutes short
     day_start_hour INTEGER DEFAULT 5);    -- punches before this hour belong to the previous work day
 
 CREATE TABLE IF NOT EXISTS employees (
@@ -202,7 +203,8 @@ def init_db():
                                 ("employees", "disabled_person", "INTEGER DEFAULT 0"),
                                 ("employees", "comp_hra", "REAL DEFAULT 0"), ("employees", "comp_conveyance", "REAL DEFAULT 0"),
                                 ("employees", "comp_other", "REAL DEFAULT 0"),
-                                ("employees", "multi_punch", "INTEGER DEFAULT 0")):
+                                ("employees", "multi_punch", "INTEGER DEFAULT 0"),
+                                ("shifts", "ot_grace_min", "INTEGER DEFAULT 5")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

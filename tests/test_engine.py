@@ -56,6 +56,20 @@ def test_ot_rounding():
     assert r["ot_min"] == 0
 
 
+def test_ot_rounding_grace():
+    # std 11h (worked = span - 30 lunch)
+    assert ev([t(9), t(22, 29)])["ot_min"] == 120                 # 119 extra (1:59) -> 2:00
+    assert ev([t(9), t(22, 59)])["ot_min"] == 120 + 30            # 149 extra -> 150 with grace
+    assert ev([t(9), t(22, 54)])["ot_min"] == 120                 # 144 extra (6 short) -> 120
+    sh = dict(SHIFT, ot_grace_min=0)
+    assert engine.evaluate_day(D, [t(9), t(22, 59)], sh, S, today=TODAY)["ot_min"] == 120
+    sh = dict(SHIFT, ot_grace_min=10)
+    assert engine.evaluate_day(D, [t(9), t(22, 54)], sh, S, today=TODAY)["ot_min"] == 150
+    # threshold also forgives the grace: 25 extra + 5 -> one 30-min block
+    assert ev([t(9), t(20, 55)])["ot_min"] == 30
+    assert ev([t(9), t(20, 54)])["ot_min"] == 0
+
+
 def test_absent_and_future():
     assert ev([])["status"] == "A"
     assert engine.evaluate_day(dt.date(2026, 11, 3), [], SHIFT, S, today=TODAY)["status"] == "-"

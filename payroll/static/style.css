@@ -262,3 +262,6 @@ tr.punch-list-row > td { background: #fbfaff; padding: 8px 14px 12px; }
   td .badge { line-height: 1.2; }
   th:empty, td.noprint + td:empty { display: none; }
 }
+
+fieldset.grace { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px 10px; margin: 4px 0 0; }
+fieldset.grace legend { font-weight: 600; font-size: 13px; padding: 0 6px; color: #2b3846; }
