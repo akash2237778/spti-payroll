@@ -73,3 +73,9 @@ form.inline { display: inline; }
   .scroll { max-height: none; overflow: visible; border: 0; }
 }
 @media (max-width: 700px) { header.top { height: auto; flex-wrap: wrap; padding: 8px 12px; } main { padding: 12px; } }
+
+/* manually edited final totals: Calculated vs Edited */
+.stat.edited, tr.edited td, td.edited { background: #fff1cc !important; }
+.stat.edited { border-color: #e2b33c; }
+.stat small { display: block; font-size: 11px; }
+.final-totals.has-edit { border: 2px solid #e2b33c; }

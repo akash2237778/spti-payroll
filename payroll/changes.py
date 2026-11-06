@@ -14,6 +14,7 @@ KINDS = {
     "penalty": "Late penalty",
     "roster": "Shift changed",
     "holiday": "Holiday",
+    "month_total": "Final totals edited",
 }
 TS = "%Y-%m-%d %H:%M:%S"
 
@@ -87,6 +88,17 @@ def collect(conn, start, end, emp_id=None):
         add("roster", emp, dt.date.fromisoformat(max(a["from_date"], s)), f"{base} shift",
             f"{a['shift_name']} shift ({span})", a["reason"], a["created_by"], a["created_at"], {"kind": "roster", "id": a["id"]})
 
+    for m in conn.execute("SELECT * FROM month_overrides WHERE month BETWEEN ? AND ?", (s[:7], e[:7])):
+        was, now = [], []
+        if m["payable_days"] is not None:
+            was.append(f"{m['calc_payable_days']:g} payable days" if m["calc_payable_days"] is not None else "calculated days")
+            now.append(f"{m['payable_days']:g} payable days")
+        if m["ot_min"] is not None:
+            was.append(f"OT {engine.fmt_min(m['calc_ot_min'])}" if m["calc_ot_min"] is not None else "calculated OT")
+            now.append(f"OT {engine.fmt_min(m['ot_min'])}")
+        add("month_total", emps.get(m["employee_id"]), max(dt.date.fromisoformat(m["month"] + "-01"), start),
+            ", ".join(was), ", ".join(now), m["reason"], m["created_by"], m["created_at"], {"kind": "month_total", "id": m["id"]})
+
     if not emp_id:
         for h in conn.execute("SELECT * FROM holidays WHERE hdate BETWEEN ? AND ?", (s, e)):
             add("holiday", None, dt.date.fromisoformat(h["hdate"]), "working day",
@@ -119,7 +131,7 @@ def day_text(d):
 
 def compare(conn, changes, start, end, settings):
     """For every edited employee-day: what the machine alone says vs what is used now."""
-    keys = {(c["emp"]["id"], c["date"]) for c in changes if c["emp"] and c["kind"] != "roster"}
+    keys = {(c["emp"]["id"], c["date"]) for c in changes if c["emp"] and c["kind"] not in ("roster", "month_total")}
     roster = {c["emp"]["id"] for c in changes if c["emp"] and c["kind"] == "roster"}
     ids = {k[0] for k in keys} | roster
     if not ids:

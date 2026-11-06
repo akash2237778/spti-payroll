@@ -50,7 +50,11 @@ def calc_lines(row, settings, cur="₹"):
     working = " + ".join(parts)
     if s.get("late_deduction_days"):
         working += f" − {num(s['late_deduction_days'])} late-mark deduction"
-    lines.append(("Payable days", working, num(s["payable_days"])))
+    ed = s.get("edited") or {}
+    lines.append(("Payable days" + (" (calculated)" if ed.get("payable_days") else ""), working,
+                  num(s.get("calc_payable_days", s["payable_days"]))))
+    if ed.get("payable_days"):
+        lines.append(("Payable days (edited)", f"set by {s.get('edit_by', '')}: {s.get('edit_reason', '')}", num(s["payable_days"])))
     std_h = p.get("std_hours") or s["std_min"] / 60
     if p["salary_type"] == "monthly":
         lines.append(("Per-day rate", f"{money(p['rate'], cur)} ÷ {p['divisor']} days", money(p["per_day"], cur)))
@@ -70,11 +74,15 @@ def calc_lines(row, settings, cur="₹"):
             parts.append(f"{engine.fmt_min(s['late_penalty_min'])} late penalty ({num(s.get('late_penalty_days', 0))} day(s))")
         if s.get("early_short_min"):
             parts.append(f"{engine.fmt_min(s['early_short_min'])} short on 6–8 h full days ({num(s.get('early_short_days', 0))} day(s))")
-        lines.append(("Overtime hours", " − ".join(parts), engine.fmt_min(s["ot_min"])))
+        lines.append(("Overtime hours" + (" (calculated)" if ed.get("ot_min") else ""), " − ".join(parts),
+                      engine.fmt_min(s.get("calc_ot_min", s["ot_min"]))))
         if s.get("late_penalty_unrecovered_min"):
             lines.append(("", f"deductions larger than OT; {engine.fmt_min(s['late_penalty_unrecovered_min'])} not recovered (OT cannot go below 0)", ""))
     else:
-        lines.append(("Overtime hours", f"{num(round(gross_ot, 2))} h beyond standard shift", engine.fmt_min(s["ot_min"])))
+        lines.append(("Overtime hours" + (" (calculated)" if ed.get("ot_min") else ""), f"{num(round(gross_ot, 2))} h beyond standard shift",
+                      engine.fmt_min(s.get("calc_ot_min", s["ot_min"]))))
+    if ed.get("ot_min"):
+        lines.append(("Overtime hours (edited)", f"set by {s.get('edit_by', '')}: {s.get('edit_reason', '')}", engine.fmt_min(s["ot_min"])))
     lines.append(("Overtime pay", f"{num(p['ot_hours'])} h × {money(p['hour_rate'], cur)} × {num(row['emp'].get('ot_multiplier') or 1)}"
                   + ("" if row["emp"].get("ot_enabled", 1) else " (not OT eligible)"), money(p["ot_pay"], cur)))
     g_parts = [f"{money(p['basic'], cur)} basic", f"{money(p['ot_pay'], cur)} OT"]
@@ -299,6 +307,8 @@ def _employee_sheet(wb, row, month, settings, R, title):
     # ---- summary + salary, each a formula
     r0 = tr + 2
     cells = {}
+    ed_days = bool((s.get("edited") or {}).get("payable_days"))
+    ed_ot = bool((s.get("edited") or {}).get("ot_min"))
     plan = [
         ("Present (P)", f'=COUNTIF({rng("D")},"P")', None),
         ("Half days (HD)", f'=COUNTIF({rng("D")},"HD")', None),
@@ -313,12 +323,16 @@ def _employee_sheet(wb, row, month, settings, R, title):
         ("Worked credit (days)", f"=SUM({rng('L')})", "work"),
         ("Extra credit (days)", f"=SUM({rng('M')})", "extra"),
         ("Paid off-days (WO×paid + holiday + leave)", f"=SUM({rng('N')})*{WOP}+SUM({rng('O')})+SUM({rng('P')})", "paidoff"),
-        ("PAYABLE DAYS", "=MAX(0,{work}+{extra}+{paidoff}-{late_ded})", "payable"),
+        ("Payable days (calculated)", "=MAX(0,{work}+{extra}+{paidoff}-{late_ded})", "payable_calc"),
+        ("Payable days (edited - leave blank to use calculated)", s["payable_days"] if ed_days else None, "payable_edit"),
+        ("PAYABLE DAYS", "=IF(ISNUMBER({payable_edit}),{payable_edit},{payable_calc})", "payable"),
         ("Worked hours", f"=SUM({rng('G')})/60", "worked_h"),
         ("OT earned (min)", f"=SUM({rng('J')})", "ot_gross"),
         ("Late penalty (min)", f"=SUM({rng('K')})", "lp"),
         ("Early-leave short (min)", f"=SUM({rng('Y')})", "short"),
-        ("OT hours (net, never below 0)", "=MAX(0,{ot_gross}-{lp}-{short})/60", "ot_h"),
+        ("OT hours calculated (net, never below 0)", "=MAX(0,{ot_gross}-{lp}-{short})/60", "ot_calc"),
+        ("OT hours (edited - leave blank to use calculated)", round(s["ot_min"] / 60, 6) if ed_ot else None, "ot_edit"),
+        ("OT HOURS", "=IF(ISNUMBER({ot_edit}),{ot_edit},{ot_calc})", "ot_h"),
         ("Salary type", f"={T}", "type"),
         ("Rate", f"={BA}", "rate"),
         ("Per-day rate", f'=IF({T}="monthly",{BA}/{BR},IF({T}="daily",{BA},{BA}*{STD}))', "per_day"),
@@ -347,7 +361,7 @@ def _employee_sheet(wb, row, month, settings, R, title):
         val = formula.format(**cells) if isinstance(formula, str) else formula
         c = ws.cell(row=r, column=2, value=val)
         c.border = BOX
-        if isinstance(formula, (int, float)):
+        if formula is None or isinstance(formula, (int, float)):
             c.fill = INPUT_FILL
         if label.isupper():
             ws.cell(row=r, column=1).font = BOLD

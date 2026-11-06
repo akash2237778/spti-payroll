@@ -421,8 +421,49 @@ def test_end_to_end(client):
 
     # 12. Today screen: "Present first" groups rows (present, missing punch, absent / not in yet, off / leave)
     html = c.get("/?date=2026-10-27&order=status").data.decode()
+    assert _re.search(r"<title>Today · [^<]*</title>", html), "page title must be plain text"
     heads = _re.findall(r'<tr class="grp-head"><td colspan="12"><b>([^<]+)</b>', html)
     order = ["Present", "Missing punch", "Absent / not in yet", "Off / holiday / leave"]
     assert heads and heads == [h for h in order if h in heads], heads
     assert '<tr class="grp-head">' in c.get("/?date=2026-10-28").data.decode()        # remembered
     assert '<tr class="grp-head">' not in c.get("/?date=2026-10-28&order=list").data.decode()
+
+    # 13. edit final totals (payable days / OT): Calculated vs Edited, used for pay, Excel, Changes, undo
+    with db.tx() as conn:
+        base = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]
+    calc_days, calc_ot = base["summary"]["payable_days"], base["summary"]["ot_min"]
+    assert post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days=str(calc_days + 1),
+                ot_hours="10:30", reason="").status_code == 200
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM month_overrides").fetchone(), "reason is required"
+    post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days=str(calc_days + 1), ot_hours="10:30",
+         reason="approved by manager")
+    with db.tx() as conn:
+        row = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]
+    s13 = row["summary"]
+    assert s13["payable_days"] == calc_days + 1 and s13["ot_min"] == 630
+    assert s13["calc_payable_days"] == calc_days and s13["calc_ot_min"] == calc_ot
+    assert row["pay"]["ot_hours"] == 10.5 and row["pay"]["basic"] > base["pay"]["basic"]
+    pg = c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "Final totals" in pg and "has-edit" in pg and "approved by manager" in pg and "calculated <s>" in pg
+    assert 'class="n edited"' in c.get("/payroll?month=2026-10").data.decode()
+    # Excel for this employee uses the edited values through its formulas
+    r = c.get(f"/export/payroll_formulas.xlsx?month=2026-10&eid={kam}")
+    path13 = os.path.join(tempfile.mkdtemp(), "e.xlsx")
+    open(path13, "wb").write(r.data)
+    x13 = ExcelCompiler(filename=path13)
+    assert abs(x13.evaluate("Payroll!F4") - (calc_days + 1)) < 1e-9 and abs(x13.evaluate("Payroll!H4") - 10.5) < 1e-9
+    assert abs(x13.evaluate("Payroll!V4") - row["pay"]["net"]) < 0.5
+    # listed on Changes, undo restores calculated
+    ch = c.get(f"/changes?month=2026-10&kind=month_total").data.decode()
+    assert "Final totals edited" in ch and "OT 10:30" in ch
+    with db.tx() as conn:
+        mo = conn.execute("SELECT id FROM month_overrides WHERE employee_id=?", (kam,)).fetchone()["id"]
+    post(c, "/changes/undo", kind="month_total", id=str(mo))
+    with db.tx() as conn:
+        back = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["summary"]
+    assert back["payable_days"] == calc_days and back["edited"] == {}
+    # viewer cannot edit totals
+    login_as("viewer1", "viewer123")
+    assert post(c, f"/attendance/employee/{kam}/totals", month="2026-10", payable_days="1", reason="x").status_code == 403
+    login_as("admin", "secret123")

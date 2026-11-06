@@ -1,6 +1,5 @@
 {% extends "base.html" %}{% from "_macros.html" import st, csrf_field, sort_toggle with context %}
-{% block title %}Today<style>.grp-head td { background: #eef2f6; border-top: 2px solid #c8d0d9; padding-top: 8px; }</style>
-{% endblock %}
+{% block title %}Today{% endblock %}
 {% block body %}
 <h1>Attendance for {{ day.strftime('%a, %d %b %Y') }}
   <span class="nav-month"><a class="btn light small" href="{{ url_for('dashboard', date=prev) }}">&larr;</a>

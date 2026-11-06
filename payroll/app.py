@@ -645,6 +645,7 @@ def att_employee(eid):
         start, end = engine.month_range(month)
         d = engine.employee_days(g.conn, [dict(emp)], start, end, g.settings)[eid]
         summ = engine.summarize(d["days"], d["shift"], g.settings, emp["salary_type"], d.get("before", ()), d.get("after", ()))
+        payroll.apply_month_override(summ, payroll.month_overrides(g.conn, month).get(eid))
         row = {"emp": dict(emp), "days": d["days"], "summary": summ, "shift": d["shift"],
                "pay": payroll.calculate(dict(emp), summ, month, g.settings)}
     else:
@@ -753,6 +754,74 @@ def late_penalty(eid):
         audit("late_penalty", {"emp": eid, "date": ds, "minutes": minutes})
     back = f.get("back", "")
     return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month))
+
+
+def parse_hours(text):
+    """'95:30', '95.5' or '95' -> minutes; '' -> None."""
+    text = (text or "").strip()
+    if not text:
+        return None
+    if ":" in text:
+        h, m = text.split(":", 1)
+        mins = int(h or 0) * 60 + int(m or 0)
+    else:
+        mins = round(float(text) * 60)
+    if mins < 0:
+        raise ValueError("negative")
+    return mins
+
+
+@app.route("/attendance/employee/<int:eid>/totals", methods=["POST"])
+@edit_required
+def month_totals(eid):
+    """Manually set the month's final payable days and/or overtime (calculated values are kept for comparison)."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    ensure_unlocked(month)
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    if f.get("action") == "reset":
+        g.conn.execute("DELETE FROM month_overrides WHERE employee_id=? AND month=?", (eid, month))
+        audit("month_totals_reset", {"emp": eid, "month": month})
+        flash("Final totals back to the calculated values", "ok")
+        return redirect(back)
+    try:
+        days = float(f["payable_days"]) if f.get("payable_days", "").strip() else None
+        ot = parse_hours(f.get("ot_hours"))
+    except ValueError:
+        flash("Payable days must be a number; overtime like 95:30 or 95.5", "error")
+        return redirect(back)
+    start, end = engine.month_range(month)
+    if days is not None and not (0 <= days <= (end - start).days + 1):
+        flash(f"Payable days must be between 0 and {(end - start).days + 1}", "error")
+        return redirect(back)
+    rows = payroll.compute_month(g.conn, month, employee_ids={eid})
+    calc_days = rows[0]["summary"]["calc_payable_days"] if rows else None
+    calc_ot = rows[0]["summary"]["calc_ot_min"] if rows else None
+    if days is not None and calc_days is not None and abs(days - calc_days) < 1e-9:
+        days = None   # same as calculated: nothing to override
+    if ot is not None and calc_ot is not None and ot == int(calc_ot):
+        ot = None
+    if days is None and ot is None:
+        g.conn.execute("DELETE FROM month_overrides WHERE employee_id=? AND month=?", (eid, month))
+        flash("Same as calculated - no edit saved", "ok")
+        return redirect(back)
+    if not f.get("reason", "").strip():
+        flash("Please give a reason for editing the final totals", "error")
+        return redirect(back)
+    g.conn.execute("""INSERT INTO month_overrides(employee_id, month, payable_days, ot_min, calc_payable_days, calc_ot_min,
+                                                  reason, created_by, created_at) VALUES (?,?,?,?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET payable_days=excluded.payable_days, ot_min=excluded.ot_min,
+                      calc_payable_days=excluded.calc_payable_days, calc_ot_min=excluded.calc_ot_min, reason=excluded.reason,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, days, ot, calc_days, calc_ot, f["reason"].strip(), g.user["username"],
+                    dt.datetime.now().strftime(TS_FMT)))
+    audit("month_totals_edit", {"emp": eid, "month": month, "payable_days": [calc_days, days], "ot_min": [calc_ot, ot],
+                                "reason": f["reason"].strip()})
+    flash(f"Final totals for {emp['name']} {month} edited", "ok")
+    return redirect(back)
 
 
 @app.route("/attendance/day/<int:eid>/<date>", methods=["GET", "POST"])
@@ -984,7 +1053,7 @@ def adjustments():
 
 def edited_set(start, end, emp_id=None):
     """(employee_id, date) pairs a person changed - used to highlight cells. Holidays apply to all, so skipped."""
-    return {(c["emp"]["id"], c["date"]) for c in chg.collect(g.conn, start, end, emp_id) if c["emp"]}
+    return {(c["emp"]["id"], c["date"]) for c in chg.collect(g.conn, start, end, emp_id) if c["emp"] and c["kind"] != "month_total"}
 
 
 @app.route("/changes")
@@ -1024,9 +1093,11 @@ def changes_undo():
     f = request.form
     kind, rid = f["kind"], int(f["id"])
     table = {"punch_added": "punches", "punch_role": "punches", "status": "day_overrides", "leave": "leaves",
-             "penalty": "late_penalties", "roster": "employee_shifts", "holiday": "holidays"}.get(kind) or abort(400)
+             "penalty": "late_penalties", "roster": "employee_shifts", "holiday": "holidays",
+             "month_total": "month_overrides"}.get(kind) or abort(400)
     row = g.conn.execute(f"SELECT * FROM {table} WHERE id = ?", (rid,)).fetchone() or abort(404)
-    date = (row["ts"][:10] if table == "punches" else row["work_date"] if "work_date" in row.keys()
+    date = (row["ts"][:10] if table == "punches" else row["month"] + "-01" if table == "month_overrides"
+            else row["work_date"] if "work_date" in row.keys()
             else row["leave_date"] if table == "leaves" else row["hdate"] if table == "holidays" else row["from_date"])
     if table == "employee_shifts":
         _ensure_range_unlocked(row["from_date"], row["to_date"])

@@ -22,8 +22,11 @@
   <div class="stat warn"><span>Missing punch</span><b>{{ s.get('cnt_MP',0)|days }}</b></div>
   <div class="stat warn"><span>Late marks</span><b>{{ s.get('late_count',0)|days }}</b></div>
   <div class="stat"><span>Hours worked</span><b>{{ fmt_min(s.worked_min) }}</b></div>
-  <div class="stat"><span>OT hours</span><b>{{ fmt_min(s.ot_min) }}</b></div>
-  <div class="stat ok"><span>Payable days</span><b>{{ s.payable_days|days }}</b></div>
+  {% set ed = s.get('edited', {}) %}
+  <div class="stat {{ 'edited' if ed.ot_min }}"><span>OT hours{{ ' · edited' if ed.ot_min }}</span><b>{{ fmt_min(s.ot_min) }}</b>
+    {% if ed.ot_min %}<small class="muted">calculated <s>{{ fmt_min(s.calc_ot_min) }}</s></small>{% endif %}</div>
+  <div class="stat ok {{ 'edited' if ed.payable_days }}"><span>Payable days{{ ' · edited' if ed.payable_days }}</span><b>{{ s.payable_days|days }}</b>
+    {% if ed.payable_days %}<small class="muted">calculated <s>{{ s.calc_payable_days|days }}</s></small>{% endif %}</div>
   {% if can_pay %}<div class="stat ok"><span>Net pay</span><b>{{ cur }}{{ p.net|money }}</b></div>{% endif %}
 </div>
 {{ legend() }}
@@ -109,6 +112,35 @@
     <th class="n">{{ s.payable_days|days }}{% if s.get('late_deduction_days') %} <span class="small muted">(after −{{ s.late_deduction_days|days }} late)</span>{% endif %}</th>
     <th colspan="3" class="small muted">OT paid {{ fmt_min(s.ot_min) }}</th></tr>
 </table></div>
+{% set ed = s.get('edited', {}) %}
+<div class="card final-totals {{ 'has-edit' if ed }}" id="final-totals" style="margin-top:14px">
+  <h2 style="margin-top:0">Final totals {% if ed %}<span class="badge warn">edited by {{ s.edit_by }} {{ (s.edit_at or '')[:16] }}</span>{% endif %}</h2>
+  <form method="post" action="{{ url_for('month_totals', eid=emp.id) }}">{{ csrf_field() }}
+    <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#final-totals">
+    <table style="max-width:760px">
+      <tr><th></th><th class="n">Calculated</th><th>Edited</th><th class="n">Used for pay</th></tr>
+      <tr class="{{ 'edited' if ed.payable_days }}"><td><b>Payable days</b></td><td class="n">{{ s.calc_payable_days|days }}</td>
+        <td>{% if can_edit and not locked %}<input name="payable_days" type="number" step="0.5" min="0" max="31" style="width:90px"
+              value="{{ (s.payable_days|days) if ed.payable_days else '' }}" placeholder="{{ s.calc_payable_days|days }}">
+            {% elif ed.payable_days %}{{ s.payable_days|days }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="n"><b>{{ s.payable_days|days }}</b>{% if ed.payable_days %} <span class="small">({{ '%+g'|format(s.payable_days - s.calc_payable_days) }})</span>{% endif %}</td></tr>
+      <tr class="{{ 'edited' if ed.ot_min }}"><td><b>Overtime (h:mm)</b></td><td class="n">{{ fmt_min(s.calc_ot_min) }}</td>
+        <td>{% if can_edit and not locked %}<input name="ot_hours" style="width:90px" value="{{ fmt_min(s.ot_min) if ed.ot_min else '' }}"
+              placeholder="{{ fmt_min(s.calc_ot_min) }}" title="95:30 or 95.5">
+            {% elif ed.ot_min %}{{ fmt_min(s.ot_min) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+        <td class="n"><b>{{ fmt_min(s.ot_min) }}</b>{% if ed.ot_min %} <span class="small">({{ '+' if s.ot_min >= s.calc_ot_min else '−' }}{{ fmt_min((s.ot_min - s.calc_ot_min)|abs) }})</span>{% endif %}</td></tr>
+    </table>
+    {% if ed %}<p class="small" style="margin:6px 0"><b>Reason:</b> {{ s.edit_reason }}</p>{% endif %}
+    {% if can_edit and not locked %}
+    <div class="row" style="margin-top:8px;align-items:flex-end">
+      <div class="grow"><label>Reason (required to edit)</label><input name="reason" style="width:100%" value="{{ s.edit_reason if ed else '' }}" placeholder="e.g. approved by manager"></div>
+      <button>Save final totals</button>
+      {% if ed %}<button class="light" name="action" value="reset" formnovalidate onclick="return confirm('Go back to the calculated values?')">Use calculated</button>{% endif %}
+    </div>
+    <p class="small muted" style="margin:4px 0 0">Leave a box empty to keep the calculated value. Edited totals are used for salary, payslips, statements and Excel.</p>
+    {% endif %}
+  </form>
+</div>
 {% if can_pay %}
 <div class="card" style="margin-top:14px"><h2>Salary preview ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>
   <table style="max-width:560px">

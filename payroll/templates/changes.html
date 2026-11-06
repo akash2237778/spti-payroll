@@ -39,7 +39,7 @@ and what is <b>used now</b>. <b>Undo</b> removes a change so the machine's data 
       <td class="small">{% if c.machine %}<s class="muted">{{ c.machine }}</s> → {% endif %}<b>{{ c.changed }}</b></td>
       <td class="small">{{ c.reason }}</td><td class="small">{{ c.by }}</td><td class="small muted">{{ c.at }}</td>
       <td style="white-space:nowrap">
-        {% if gr.emp and c.kind not in ('roster',) %}<a class="small" href="{{ url_for('att_day', eid=gr.emp.id, date=gr.date.isoformat(), back=request.full_path) }}">day</a>{% endif %}
+        {% if gr.emp and c.kind not in ('roster', 'month_total') %}<a class="small" href="{{ url_for('att_day', eid=gr.emp.id, date=gr.date.isoformat(), back=request.full_path) }}">day</a>{% endif %}
         {% if can_edit and not locked %}
         <form method="post" action="{{ url_for('changes_undo') }}" class="inline" onsubmit="return confirm('Undo this change?')">{{ csrf_field() }}
           <input type="hidden" name="kind" value="{{ c.undo.kind }}"><input type="hidden" name="id" value="{{ c.undo.id }}">
@@ -57,6 +57,6 @@ and what is <b>used now</b>. <b>Undo</b> removes a change so the machine's data 
   .changes .chg { background: #fff1cc; padding: 1px 4px; border-radius: 4px; }
   .kind-punch_added { background: #d6e9ff; } .kind-punch_ignored { background: #fadbd8; } .kind-punch_marked { background: #e0f2f1; }
   .kind-status { background: #ece2fb; } .kind-leave { background: #d9f2e3; } .kind-penalty { background: #ffe0b2; }
-  .kind-roster { background: #fff1cc; } .kind-holiday { background: #e8eaed; }
+  .kind-roster { background: #fff1cc; } .kind-holiday { background: #e8eaed; } .kind-month_total { background: #fff1cc; border: 1px solid #e2b33c; }
 </style>
 {% endblock %}

@@ -96,15 +96,40 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None):
     adjs = {}
     for a in conn.execute("SELECT * FROM adjustments WHERE month = ?", (month,)):
         adjs.setdefault(a["employee_id"], []).append(dict(a))
+    overrides = month_overrides(conn, month)
     rows = []
     for e in emps:
         d = data[e["id"]]
         summary = engine.summarize(d["days"], d["shift"], settings, e["salary_type"], d.get("before", ()), d.get("after", ()))
+        apply_month_override(summary, overrides.get(e["id"]))
         if not e["active"] and summary["worked_min"] == 0 and not adjs.get(e["id"]):
             continue
         pay = calculate(e, summary, month, settings, adjs.get(e["id"], []))
         rows.append({"emp": e, "days": d["days"], "shift": d["shift"], "summary": summary, "pay": pay})
     return rows
+
+
+def month_overrides(conn, month):
+    return {r["employee_id"]: dict(r) for r in conn.execute("SELECT * FROM month_overrides WHERE month = ?", (month,))}
+
+
+def apply_month_override(summary, ov):
+    """Final payable days / OT edited by a person win over the calculated ones; the calculated values are kept
+    in calc_* so screens can show Calculated vs Edited."""
+    summary["calc_payable_days"] = summary["payable_days"]
+    summary["calc_ot_min"] = summary["ot_min"]
+    summary["edited"] = {}
+    if not ov:
+        return summary
+    if ov.get("payable_days") is not None:
+        summary["payable_days"] = float(ov["payable_days"])
+        summary["edited"]["payable_days"] = True
+    if ov.get("ot_min") is not None:
+        summary["ot_min"] = float(ov["ot_min"])
+        summary["edited"]["ot_min"] = True
+    if summary["edited"]:
+        summary["edit_reason"], summary["edit_by"], summary["edit_at"] = ov.get("reason") or "", ov.get("created_by") or "", ov.get("created_at") or ""
+    return summary
 
 
 def run_status(conn, month):

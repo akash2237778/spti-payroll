@@ -65,6 +65,11 @@ CREATE TABLE IF NOT EXISTS day_overrides (
     created_by TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(employee_id, work_date));
 
+CREATE TABLE IF NOT EXISTS month_overrides (   -- final totals edited by a person (calculated values kept alongside)
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    month TEXT NOT NULL, payable_days REAL, ot_min INTEGER, calc_payable_days REAL, calc_ot_min INTEGER,
+    reason TEXT DEFAULT '', created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
+
 CREATE TABLE IF NOT EXISTS late_penalties (    -- chosen day by day on the employee sheet
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     work_date TEXT NOT NULL, minutes INTEGER NOT NULL, note TEXT DEFAULT '', created_by TEXT,

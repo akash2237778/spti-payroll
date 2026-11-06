@@ -492,3 +492,22 @@ def test_short_day_month_totals():
             ev8h((9, 0), (20, 30), day=d3)]      # full, 180 OT
     s = engine.summarize(days, SHIFT8H, S, "monthly")
     assert s["payable_days"] == 2.5 and s["ot_min_gross"] == 210 and s["early_short_min"] == 90 and s["ot_min"] == 120
+
+
+# ---------------------------------------------------------------- manually edited final totals
+
+def test_month_override_keeps_calculated_values():
+    s = {"payable_days": 26.5, "ot_min": 600.0}
+    payroll.apply_month_override(s, None)
+    assert s["calc_payable_days"] == 26.5 and s["calc_ot_min"] == 600 and s["edited"] == {}
+    s = {"payable_days": 26.5, "ot_min": 600.0}
+    payroll.apply_month_override(s, {"payable_days": 27, "ot_min": None, "reason": "approved", "created_by": "hr"})
+    assert s["payable_days"] == 27 and s["ot_min"] == 600 and s["calc_payable_days"] == 26.5 and s["edited"] == {"payable_days": True}
+    emp = {"salary_type": "monthly", "salary_rate": 31000, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 0}
+    p = payroll.calculate(emp, dict(s, std_min=480, worked_min=0, paid_off_days=0), "2026-10", S)
+    assert p["basic"] == 27000 and p["payable_days"] == 27
+
+
+def test_parse_hours():
+    from payroll.app import parse_hours
+    assert parse_hours("95:30") == 5730 and parse_hours("95.5") == 5730 and parse_hours("2") == 120 and parse_hours("") is None
