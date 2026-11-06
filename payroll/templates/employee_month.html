@@ -198,6 +198,30 @@
       <p class="small muted" style="margin:4px 0 0">The rest of the net pay is paid in cash.</p>
       {% endif %}
     </form>
+    {% set cp = row.get('cash_paid') %}
+    <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="card grow" style="background:#f8fafc">{{ csrf_field() }}
+      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+      <b>Cash actually paid for {{ month }}</b>
+      <table style="margin-top:4px">
+        <tr><td>Cash (calculated)</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
+        <tr class="{{ 'edited' if cp and row.cash_diff }}"><td>Cash paid</td><td class="n">{{ (cur ~ (cp.paid_amount|money)) if cp else '—' }}</td></tr>
+        {% if cp %}<tr><td>Difference</td><td class="n"><b>{{ '%+.2f'|format(row.cash_diff) }}</b>{% if cp.carried_month %} <span class="small muted">carried to {{ cp.carried_month }}</span>{% endif %}</td></tr>{% endif %}
+      </table>
+      {% if not (cp and cp.carried_month) %}
+      <div class="row" style="align-items:flex-end;margin-top:6px">
+        <div><label>Paid ({{ cur }})</label><input name="paid_amount" type="number" step="1" min="0" style="width:110px" value="{{ cp.paid_amount|int if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
+        <div class="grow"><label>Note</label><input name="note" style="width:100%" value="{{ cp.note if cp else '' }}" placeholder="rounded off"></div>
+        <button class="small">Save</button>
+      </div>
+      {% endif %}
+      {% if cp and row.cash_diff and not cp.carried_month %}
+      <button class="light small" style="margin-top:6px" form="carry-cash" title="Short-paid is added as an allowance, over-paid is deducted">Carry {{ '%+.2f'|format(row.cash_diff) }} into next month</button>
+      {% endif %}
+    </form>
+    {% if cp and row.cash_diff and not cp.carried_month %}
+    <form method="post" action="{{ url_for('cash_carry', eid=emp.id) }}" id="carry-cash" style="display:none">{{ csrf_field() }}
+      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary"></form>
+    {% endif %}
     <div class="card grow" style="background:#f8fafc">
       <b>Advance</b>
       {% if adv and (adv.outstanding_before > 0 or adv.this_month) %}
@@ -217,7 +241,20 @@
       </form>
       {% endif %}
       {% else %}<p class="small muted" style="margin:4px 0">No advance outstanding.</p>{% endif %}
-      <p class="small" style="margin:6px 0 0"><a href="{{ url_for('adjustments', month=month) }}">Give an advance / see history</a></p>
+      {% if not locked %}
+      <details style="margin-top:6px" {{ 'open' if not adv or adv.outstanding_before <= 0 }}>
+        <summary class="small" style="cursor:pointer"><b>Record an advance given</b> (then deduct it above)</summary>
+        <form method="post" action="{{ url_for('advances_action') }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+          <input type="hidden" name="action" value="give"><input type="hidden" name="employee_id" value="{{ emp.id }}">
+          <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+          <div><label>Date given</label><input type="date" name="given_date" value="{{ month }}-01" required></div>
+          <div><label>Amount ({{ cur }})</label><input type="number" name="amount" step="0.01" min="1" required style="width:100px"></div>
+          <div><label>Instalment / month</label><input type="number" name="installment" step="0.01" min="1" style="width:100px"></div>
+          <button class="small">Record</button>
+        </form>
+      </details>
+      {% endif %}
+      <p class="small" style="margin:6px 0 0"><a href="{{ url_for('adjustments', month=month) }}">All advances / history</a></p>
     </div>
   </div>
   {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}

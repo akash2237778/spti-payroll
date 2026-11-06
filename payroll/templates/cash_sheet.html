@@ -1,18 +1,44 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
 {% block title %}Cash sheet {{ month }}{% endblock %}
 {% block body %}
+<h1 class="noprint">Cash salary distribution
+  <span class="nav-month small"><form class="inline" method="get"><input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></form></span>
+  <a class="btn light small" href="{{ url_for('payroll_view', month=month) }}">← Payroll</a></h1>
 <div class="toolbar noprint"><button onclick="window.print()">Print</button>
   <a class="btn light" href="{{ url_for('export_cash', month=month) }}">CSV</a>
-  <span class="muted">{{ rows|length }} employee(s) paid in cash · total {{ cur }}{{ total|money }}</span></div>
+  <span class="muted">{{ rows|length }} employee(s) · calculated cash {{ cur }}{{ total|money }} · recorded as paid {{ cur }}{{ total_paid|money }}</span></div>
+<p class="small muted noprint">Enter the cash actually handed over (e.g. rounded off) and press <b>Save cash paid</b>. Blank = not recorded yet.
+A difference can be carried into {{ next_month }}: short-paid is added as an allowance, over-paid is deducted.</p>
+<form method="post" id="paidform">{{ csrf_field() }}</form>
 <div class="card">
   <h2 style="margin-top:0">{{ settings.company_name }} · Cash salary distribution · {{ month }}</h2>
   <table>
-    <tr><th>#</th><th>Emp ID</th><th>Name</th><th>Department</th><th class="n">Net pay</th><th class="n">By bank</th><th class="n">Cash</th><th style="width:180px">Signature</th></tr>
-    {% for r in rows %}<tr><td>{{ loop.index }}</td><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td><td>{{ r.emp.department }}</td>
-      <td class="n">{{ r.pay.net|money }}</td><td class="n">{{ r.pay.bank|money }}</td><td class="n"><b>{{ r.pay.cash|money }}</b></td><td style="height:34px"></td></tr>
-    {% else %}<tr><td colspan="8" class="muted">Nobody is paid in cash for {{ month }}.</td></tr>{% endfor %}
-    <tr><th colspan="6">Total cash</th><th class="n">{{ cur }}{{ total|money }}</th><th></th></tr>
+    <tr><th>#</th><th>Emp ID</th><th>Name</th><th class="n">Net pay</th><th class="n">By bank</th><th class="n">Cash (calculated)</th>
+      <th class="n">Cash paid</th><th class="n">Difference</th><th class="noprint">Note</th><th style="width:150px">Signature</th></tr>
+    {% for r in rows %}{% set cp = r.cash_paid %}
+    <tr>
+      <td>{{ loop.index }}</td><td>{{ r.emp.device_user_id }}</td><td>{{ r.emp.name }}</td>
+      <td class="n">{{ r.pay.net|money }}</td><td class="n">{{ r.pay.get('bank', 0)|money }}</td><td class="n">{{ r.pay.get('cash', 0)|money }}</td>
+      <td class="n {{ 'edited' if cp and r.cash_diff }}"><input type="hidden" name="eid" value="{{ r.emp.id }}" form="paidform">
+        <input class="paid" name="paid_{{ r.emp.id }}" form="paidform" type="number" step="1" min="0" style="width:100px;text-align:right"
+               value="{{ cp.paid_amount|int if cp else '' }}" placeholder="{{ r.pay.get('cash', 0)|round|int }}" {{ 'readonly' if cp and cp.carried_month }}></td>
+      <td class="n">{% if cp %}{% if r.cash_diff %}<b style="color:{{ 'var(--bad)' if r.cash_diff < 0 else 'var(--warn)' }}">{{ '%+.2f'|format(r.cash_diff) }}</b>
+          {% if cp.carried_month %}<div class="small muted">carried to {{ cp.carried_month }}</div>
+          {% else %}<button class="light small noprint" form="carry{{ r.emp.id }}" title="Carry into next month's pay">→ {{ next_month }}</button>{% endif %}
+        {% else %}<span class="muted">0</span>{% endif %}{% endif %}</td>
+      <td class="noprint"><input name="note_{{ r.emp.id }}" form="paidform" value="{{ cp.note if cp else '' }}" style="width:130px" placeholder="rounded off"></td>
+      <td style="height:34px"></td>
+    </tr>
+    {% else %}<tr><td colspan="10" class="muted">Nobody is paid in cash for {{ month }}.</td></tr>{% endfor %}
+    <tr><th colspan="5">Total</th><th class="n">{{ cur }}{{ total|money }}</th><th class="n">{{ cur }}{{ total_paid|money }}</th><th class="n">{{ '%+.2f'|format(total_paid - total) if total_paid else '' }}</th><th class="noprint"></th><th></th></tr>
   </table>
+  <p class="noprint" style="margin-top:10px"><button form="paidform">Save cash paid</button></p>
   <div class="small muted" style="margin-top:30px;display:flex;justify-content:space-between"><span>Prepared by</span><span>Cash paid by</span><span>Approved by</span></div>
 </div>
+{% for r in rows %}{% if r.cash_paid and r.cash_diff and not r.cash_paid.carried_month %}
+<form method="post" action="{{ url_for('cash_carry', eid=r.emp.id) }}" id="carry{{ r.emp.id }}" style="display:none"
+      onsubmit="return confirm('Carry {{ '%+.2f'|format(r.cash_diff) }} into {{ next_month }} pay of {{ r.emp.name }}?')">{{ csrf_field() }}
+  <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}"></form>
+{% endif %}{% endfor %}
+<style>@media print { input.paid { border: 0; background: none; } }</style>
 {% endblock %}

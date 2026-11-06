@@ -785,6 +785,8 @@ def att_employee(eid):
     others = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active = 1 ORDER BY " + emp_order_sql()).fetchall()
     m_start, m_end = engine.month_range(month)
     adv = payroll.advance_ledger(g.conn, month, [eid]).get(eid) if can_pay() else None
+    if can_pay():
+        attach_cash_paid([row], month)
     return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
                            history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
@@ -1288,6 +1290,7 @@ def payroll_view():
     run, rows = payroll_rows(month)
     totals = {k: sum(r["pay"][k] for r in rows) for k in ("basic", "ot_pay", "allowance", "bonus", "gross", "pf", "esi",
                                                           "advance", "tds", "other_deduction", "total_deductions", "net")}
+    attach_cash_paid(rows, month)
     totals["bank"] = sum(r["pay"].get("bank", r["pay"]["net"]) for r in rows)
     totals["cash"] = sum(r["pay"].get("cash", 0) for r in rows)
     unpriced = [r for r in rows if not r["pay"]["rate"]]
@@ -1431,19 +1434,121 @@ def export_bank():
 def export_cash():
     month = cur_month()
     _, rows = payroll_rows(month)
-    return csv_response(f"cash_payments_{month}.csv", ["Emp ID", "Name", "Department", "Net pay", "By bank", "Cash", "Signature"],
+    rows = attach_cash_paid(rows, month)
+    return csv_response(f"cash_payments_{month}.csv",
+                        ["Emp ID", "Name", "Department", "Net pay", "By bank", "Cash (calculated)", "Cash paid", "Difference", "Note", "Signature"],
                         [[r["emp"]["device_user_id"], r["emp"]["name"], r["emp"].get("department", ""), r["pay"]["net"],
-                          r["pay"].get("bank", r["pay"]["net"]), r["pay"].get("cash", 0), ""] for r in rows if r["pay"].get("cash", 0) > 0])
+                          r["pay"].get("bank", r["pay"]["net"]), r["pay"].get("cash", 0),
+                          r["cash_paid"]["paid_amount"] if r["cash_paid"] else "", r["cash_diff"] if r["cash_paid"] else "",
+                          r["cash_paid"]["note"] if r["cash_paid"] else "", ""]
+                         for r in rows if r["pay"].get("cash", 0) > 0 or r["cash_paid"]])
 
 
-@app.route("/payroll/cash")
+def cash_paid_map(month, employee_ids=None):
+    """{employee_id: row} of cash actually paid for the month."""
+    q, args = "SELECT * FROM cash_payments WHERE month = ?", [month]
+    if employee_ids:
+        q += f" AND employee_id IN ({','.join('?' * len(employee_ids))})"
+        args += list(employee_ids)
+    return {r["employee_id"]: dict(r) for r in g.conn.execute(q, args)}
+
+
+def attach_cash_paid(rows, month):
+    paid = cash_paid_map(month)
+    for r in rows:
+        cp = paid.get(r["emp"]["id"])
+        r["cash_paid"] = cp
+        r["cash_diff"] = round(cp["paid_amount"] - r["pay"].get("cash", 0), 2) if cp else None
+    return rows
+
+
+def save_cash_paid(eid, month, text, note=""):
+    """Record (or clear, if blank) the cash actually paid. Allowed after finalizing: it does not change the calculation."""
+    text = (text or "").strip()
+    if not text:
+        n = g.conn.execute("DELETE FROM cash_payments WHERE employee_id=? AND month=? AND carried_month IS NULL", (eid, month)).rowcount
+        return n
+    amount = float(text)
+    if amount < 0:
+        raise ValueError("negative")
+    old = g.conn.execute("SELECT * FROM cash_payments WHERE employee_id=? AND month=?", (eid, month)).fetchone()
+    if old and old["carried_month"] and abs(old["paid_amount"] - amount) > 0.005:
+        raise ValueError(f"difference already carried to {old['carried_month']}; undo that adjustment first")
+    g.conn.execute("""INSERT INTO cash_payments(employee_id, month, paid_amount, note, created_by, created_at) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET paid_amount=excluded.paid_amount, note=excluded.note,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, amount, note, g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+    audit("cash_paid", {"emp": eid, "month": month, "paid": amount, "note": note})
+    return 1
+
+
+@app.route("/payroll/cash", methods=["GET", "POST"])
 @pay_required
 def cash_sheet():
-    """Printable cash distribution sheet with a signature column."""
+    """Printable cash distribution sheet: calculated cash, cash actually paid, difference, signature."""
     month = cur_month()
+    if request.method == "POST":
+        f = request.form
+        n, errors = 0, []
+        for eid in f.getlist("eid"):
+            try:
+                n += save_cash_paid(int(eid), month, f.get(f"paid_{eid}"), f.get(f"note_{eid}", "").strip())
+            except ValueError as e:
+                errors.append(f"#{eid}: {e}")
+        flash(f"Saved cash paid for {n} employee(s)" + (f"; not saved: {', '.join(errors)}" if errors else ""),
+              "error" if errors else "ok")
+        return redirect(url_for("cash_sheet", month=month))
     _, rows = payroll_rows(month)
-    rows = [r for r in rows if r["pay"].get("cash", 0) > 0]
-    return render_template("cash_sheet.html", rows=rows, month=month, total=sum(r["pay"]["cash"] for r in rows))
+    paid = cash_paid_map(month)
+    rows = attach_cash_paid([r for r in rows if r["pay"].get("cash", 0) > 0 or r["emp"]["id"] in paid], month)
+    return render_template("cash_sheet.html", rows=rows, month=month, total=sum(r["pay"].get("cash", 0) for r in rows),
+                           total_paid=sum(r["cash_paid"]["paid_amount"] for r in rows if r["cash_paid"]),
+                           next_month=month_nav(month)[1])
+
+
+@app.route("/employees/<int:eid>/cash_paid", methods=["POST"])
+@pay_required
+def cash_paid(eid):
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    try:
+        save_cash_paid(eid, month, f.get("paid_amount"), f.get("note", "").strip())
+        flash(f"Cash paid to {emp['name']} for {month} saved", "ok")
+    except ValueError as e:
+        flash(f"Not saved: {e}", "error")
+    return redirect(back)
+
+
+@app.route("/employees/<int:eid>/cash_carry", methods=["POST"])
+@pay_required
+def cash_carry(eid):
+    """Carry the difference between cash paid and calculated cash into next month's pay."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    nxt = month_nav(month)[1]
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    cp = g.conn.execute("SELECT * FROM cash_payments WHERE employee_id=? AND month=?", (eid, month)).fetchone()
+    rows = attach_cash_paid([r for r in payroll_rows(month)[1] if r["emp"]["id"] == eid], month)
+    if not cp or not rows or cp["carried_month"]:
+        flash("Nothing to carry (no cash payment recorded, or already carried)", "error")
+        return redirect(back)
+    ensure_unlocked(nxt)
+    diff = rows[0]["cash_diff"]
+    if abs(diff) < 0.005:
+        flash("Cash paid equals the calculated cash - nothing to carry", "ok")
+        return redirect(back)
+    kind, amount = ("allowance", -diff) if diff < 0 else ("deduction", diff)
+    g.conn.execute("INSERT INTO adjustments(employee_id, month, kind, amount, note) VALUES (?,?,?,?,?)",
+                   (eid, nxt, kind, round(amount, 2), f"cash {'short-paid' if diff < 0 else 'over-paid'} in {month}"))
+    g.conn.execute("UPDATE cash_payments SET carried_month=? WHERE id=?", (nxt, cp["id"]))
+    audit("cash_carry", {"emp": eid, "from": month, "to": nxt, "kind": kind, "amount": amount})
+    flash(f"{emp['name']}: {abs(diff):,.2f} {'added to' if diff < 0 else 'deducted from'} {nxt} pay", "ok")
+    return redirect(back)
 
 
 @app.route("/export/muster.xlsx")

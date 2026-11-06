@@ -552,3 +552,47 @@ def test_end_to_end(client):
     assert post(c, f"/employees/{kam}/split", month="2026-10", bank_amount="1").status_code == 403
     assert "Outstanding at start" not in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
     login_as("admin", "secret123")
+
+    # 16. cash actually paid (rounded / different), carry the difference, record + deduct an advance from the attendance page
+    with db.tx() as conn:
+        p16 = pr.compute_month(conn, "2026-10", employee_ids={kam})[0]["pay"]
+    assert p16["cash"] > 0
+    paid = int(p16["cash"] // 100 * 100)                         # paid rounded down to the hundred
+    sheet = c.get("/payroll/cash?month=2026-10").data.decode()
+    assert f'name="paid_{kam}"' in sheet
+    post(c, "/payroll/cash?month=2026-10", eid=str(kam), **{f"paid_{kam}": str(paid), f"note_{kam}": "rounded off"})
+    with db.tx() as conn:
+        cp16 = conn.execute("SELECT * FROM cash_payments WHERE employee_id=? AND month='2026-10'", (kam,)).fetchone()
+    assert cp16["paid_amount"] == paid and cp16["note"] == "rounded off"
+    diff16 = round(paid - p16["cash"], 2)
+    assert f"{diff16:+.2f}" in c.get("/payroll/cash?month=2026-10").data.decode()
+    assert "Cash actually paid" in c.get(f"/attendance/employee/{kam}?month=2026-10").data.decode()
+    assert "rounded off" in c.get("/export/cash.csv?month=2026-10").data.decode()
+    post(c, f"/employees/{kam}/cash_carry", month="2026-10")
+    with db.tx() as conn:
+        carried = conn.execute("SELECT * FROM adjustments WHERE employee_id=? AND month='2026-11' AND note LIKE 'cash short-paid%'", (kam,)).fetchone()
+        assert conn.execute("SELECT carried_month FROM cash_payments WHERE id=?", (cp16["id"],)).fetchone()[0] == "2026-11"
+    assert carried and carried["kind"] == "allowance" and abs(carried["amount"] + diff16) < 0.01
+    r = post(c, f"/employees/{kam}/cash_paid", month="2026-10", paid_amount=str(paid + 50))
+    assert "already carried" in r.data.decode()                    # carried amount is frozen
+    # cash paid can still be recorded after the month is finalized
+    post(c, "/payroll?month=2026-09", action="finalize")
+    with db.tx() as conn:
+        sep_emp = conn.execute("SELECT id FROM employees WHERE device_user_id='1'").fetchone()["id"]
+    post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1234", note="after finalize")
+    with db.tx() as conn:
+        assert conn.execute("SELECT paid_amount FROM cash_payments WHERE employee_id=? AND month='2026-09'", (sep_emp,)).fetchone()[0] == 1234
+    post(c, "/payroll?month=2026-09", action="reopen")
+    # record an advance from the attendance page, then deduct it there
+    pg16 = c.get(f"/attendance/employee/{sep_emp}?month=2026-10").data.decode()
+    assert "Record an advance given" in pg16
+    post(c, "/advances", action="give", employee_id=str(sep_emp), given_date="2026-10-01", amount="3000", installment="1000",
+         month="2026-10", back=f"/attendance/employee/{sep_emp}?month=2026-10")
+    post(c, "/advances", action="recover_installment", employee_id=str(sep_emp), month="2026-10")
+    with db.tx() as conn:
+        assert pr.advance_ledger(conn, "2026-10", [sep_emp])[sep_emp]["this_month"] == 1000
+    assert "Outstanding at start of 2026-10" in c.get(f"/attendance/employee/{sep_emp}?month=2026-10").data.decode()
+    login_as("hr1", "hrpass123")
+    assert c.get("/payroll/cash?month=2026-10").status_code == 403
+    assert post(c, f"/employees/{kam}/cash_paid", month="2026-10", paid_amount="1").status_code == 403
+    login_as("admin", "secret123")

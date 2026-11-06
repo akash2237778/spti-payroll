@@ -4,7 +4,7 @@
 <h1>Advances, allowances &amp; deductions {{ monthnav('adjustments', month, prev, nxt) }}
   {% if locked %}<span class="badge bad">payroll finalized - read only</span>{% endif %}</h1>
 
-<h2>Advances</h2>
+<h2>Advances — record &amp; deduct</h2>
 <p class="muted" style="margin-top:0">Record an advance when it is given, then choose each month how much to recover from salary:
 the full balance, the monthly instalment, or any amount. The balance carries over until it is cleared.</p>
 {% if not locked %}
@@ -38,7 +38,8 @@ the full balance, the monthly instalment, or any amount. The balance carries ove
         {% if a.this_month %}<button class="light small" name="action" value="recover" formnovalidate onclick="this.form.elements['amount'].value = 0" title="No recovery this month">None</button>{% endif %}
       </form>{% endif %}</td>
   </tr>
-  {% else %}<tr><td colspan="7" class="muted">No advances outstanding.</td></tr>{% endfor %}
+  {% else %}<tr><td colspan="7" class="muted">No advances outstanding. Record an advance with the form above; the employee then appears here
+    with <b>Set / Full / Instalment</b> buttons to deduct it from {{ month }} salary.</td></tr>{% endfor %}
 </table></div>
 {% if given %}
 <details class="card" style="margin-top:10px"><summary style="cursor:pointer"><b>Advance history</b> <span class="muted small">({{ given|length }})</span></summary>

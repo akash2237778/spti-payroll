@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS pay_splits (   -- this month's bank amount set by han
     month TEXT NOT NULL, bank_amount REAL NOT NULL, note TEXT DEFAULT '', created_by TEXT, created_at TEXT,
     UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may differ from the calculated cash)
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    month TEXT NOT NULL, paid_amount REAL NOT NULL, note TEXT DEFAULT '', carried_month TEXT,
+    created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
+
 CREATE TABLE IF NOT EXISTS advances (      -- money advanced to an employee; recovered through 'advance' adjustments
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     given_date TEXT NOT NULL, amount REAL NOT NULL, installment REAL, note TEXT DEFAULT '',

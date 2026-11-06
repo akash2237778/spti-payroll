@@ -17,7 +17,7 @@
   <a class="btn light" href="{{ url_for('export_payroll', fmt='xlsx', month=month) }}">Excel</a>
   <a class="btn light" href="{{ url_for('export_payroll', fmt='csv', month=month) }}">CSV</a>
   <a class="btn light" href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet</a>
-  <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}" target="_blank">Cash sheet (print)</a>
+  <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}">Cash sheet / record cash paid</a>
   <a class="btn light" href="{{ url_for('export_cash', month=month) }}">Cash CSV</a>
   <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">All payslips</a>
   <a class="btn light" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Attendance statements</a>
@@ -52,7 +52,7 @@
     <td class="n">{{ p.pf|money }}</td><td class="n">{{ p.esi|money }}</td><td class="n">{{ (p.advance + p.tds + p.other_deduction)|money }}</td>
     <td class="n"><b>{{ p.net|money }}</b></td>
     <td class="n {{ 'edited' if p.get('bank_override') }}" title="{{ p.get('pay_how', '') }}">{{ p.get('bank', p.net)|money }}</td>
-    <td class="n">{{ p.get('cash', 0)|money if p.get('cash') else '' }}</td>
+    <td class="n {{ 'edited' if r.get('cash_diff') }}" title="{{ ('paid ' ~ (r.cash_paid.paid_amount|money) ~ ', difference ' ~ ('%+.2f'|format(r.cash_diff))) if r.get('cash_paid') else '' }}">{{ p.get('cash', 0)|money if p.get('cash') else '' }}{% if r.get('cash_paid') %} <span class="small">✓</span>{% endif %}</td>
     <td><a class="small" href="{{ url_for('payslip', eid=r.emp.id, month=month) }}" target="_blank">slip</a></td>
   </tr>{% endfor %}
   <tr><th colspan="14">Total</th><th class="n">{{ totals.basic|money }}</th><th class="n">{{ totals.ot_pay|money }}</th><th class="n">{{ (totals.allowance + totals.bonus)|money }}</th>
