@@ -677,3 +677,7 @@ def test_lone_punch_on_weekly_off_is_not_sandwiched_and_is_flagged():
     s = engine.summarize(days, SHIFT, S, "monthly")
     assert days[1]["status"] == "WO" and days[1]["mp_on_off"] and "sandwich" not in " ".join(days[1]["flags"])
     assert s["payable_days"] == 1 and s.get("cnt_MP", 0) == 0 and s["cnt_WO"] == 1 and s["missing_punch"] == 1
+
+
+def test_default_late_penalty_is_flat_30():
+    assert engine.suggest_penalty(5, S) == 30 and engine.suggest_penalty(55, S) == 30

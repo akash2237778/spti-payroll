@@ -160,8 +160,8 @@ DEFAULT_SETTINGS = {
     "long_duty_flag_hours": "16",       # sessions at least this long are flagged for a quick review
     "long_duty_mode": "ot",             # ot = 1 day + overtime | double = 2 days (+OT beyond 2 shifts)
     # Late penalty is chosen day by day on each employee's sheet; these only pre-fill the suggested minutes.
-    "late_penalty_per_mark_min": "0",   # fixed OT minutes suggested per late day
-    "late_penalty_factor": "1",         # plus this multiple of the minutes late
+    "late_penalty_per_mark_min": "30",  # fixed OT minutes suggested per late day
+    "late_penalty_factor": "0",         # plus this multiple of the minutes late (0 = flat penalty)
     # Company rule, by hours worked: full-day hours..standard day -> full day, shortfall taken off OT;
     # half-day hours..full-day hours -> half day, time beyond the half day paid as OT. "0" = off.
     "short_day_rule": "1",
@@ -217,6 +217,13 @@ def init_db():
             c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, break_start, grace_in_min,
                          grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
                          VALUES ('General', '09:00', '17:30', 30, 300, '13:00', 15, 15, 360, 240, 30, 30, 5)""")
+        if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_late_penalty_30'").fetchone():
+            # Owner, 2026-11-06: default late penalty is a flat 30 OT minutes. Only untouched old defaults (0 + 1x) move.
+            if (c.execute("SELECT value FROM settings WHERE key='late_penalty_per_mark_min'").fetchone()[0] in ("0", "0.0")
+                    and c.execute("SELECT value FROM settings WHERE key='late_penalty_factor'").fetchone()[0] in ("1", "1.0")):
+                c.execute("UPDATE settings SET value='30' WHERE key='late_penalty_per_mark_min'")
+                c.execute("UPDATE settings SET value='0' WHERE key='late_penalty_factor'")
+            c.execute("INSERT INTO settings(key, value) VALUES ('migrated_late_penalty_30', '1')")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_sandwich_on'").fetchone():
             # Company rule (owner, 2026-11-02): Sunday is not paid when Saturday and Monday are taken off.
             c.execute("UPDATE settings SET value='1' WHERE key='sandwich_rule'")
