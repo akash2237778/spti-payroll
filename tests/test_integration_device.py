@@ -369,7 +369,7 @@ def test_end_to_end(client):
         r = c.get(pth)
         assert r.status_code == 200, pth
         html = r.data.decode()
-        for bad in ("16,000", "Net pay", "Salary preview", "Bulk edit salaries", "Account number", "Payroll</a>", "Basic earned"):
+        for bad in ("16,000", "Net pay", "Salary preview", "Bulk edit salaries", "Account number", ">Payroll</a>", 'href="/payroll', "Basic earned"):
             assert bad not in html, (pth, bad)
     exp = c.get("/employees/export.csv").data.decode()
     assert "salary_rate" not in exp and "bank_account" not in exp

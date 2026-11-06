@@ -12,7 +12,7 @@ A difference can be carried into {{ next_month }}: short-paid is added as an all
 <form method="post" id="paidform">{{ csrf_field() }}</form>
 <div class="card">
   <h2 style="margin-top:0">{{ settings.company_name }} · Cash salary distribution · {{ month }}</h2>
-  <table>
+  <div class="scroll" style="max-height:none;border:0"><table>
     <tr><th>#</th><th>Emp ID</th><th>Name</th><th class="n">Net pay</th><th class="n">By bank</th><th class="n">Cash (calculated)</th>
       <th class="n">Cash paid</th><th class="n">Difference</th><th class="noprint">Note</th><th style="width:150px">Signature</th></tr>
     {% for r in rows %}{% set cp = r.cash_paid %}
@@ -31,7 +31,7 @@ A difference can be carried into {{ next_month }}: short-paid is added as an all
     </tr>
     {% else %}<tr><td colspan="10" class="muted">Nobody is paid in cash for {{ month }}.</td></tr>{% endfor %}
     <tr><th colspan="5">Total</th><th class="n">{{ cur }}{{ total|money }}</th><th class="n">{{ cur }}{{ total_paid|money }}</th><th class="n">{{ '%+.2f'|format(total_paid - total) if total_paid else '' }}</th><th class="noprint"></th><th></th></tr>
-  </table>
+  </table></div>
   <p class="noprint" style="margin-top:10px"><button form="paidform">Save cash paid</button></p>
   <div class="small muted" style="margin-top:30px;display:flex;justify-content:space-between"><span>Prepared by</span><span>Cash paid by</span><span>Approved by</span></div>
 </div>

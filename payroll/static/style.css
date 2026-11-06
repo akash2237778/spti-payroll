@@ -79,3 +79,117 @@ form.inline { display: inline; }
 .stat.edited { border-color: #e2b33c; }
 .stat small { display: block; font-size: 11px; }
 .final-totals.has-edit { border: 2px solid #e2b33c; }
+
+/* ===================================================================== layout & responsive (same colours) */
+html { -webkit-text-size-adjust: 100%; }
+body { min-height: 100vh; }
+main { max-width: 1480px; padding: 20px 22px 40px; }
+h1 { line-height: 1.25; }
+h1 .nav-month, h1 .btn, h1 button { font-size: 13px; }
+h2 { color: #2b3846; }
+
+/* header: one row on desktop, "More" dropdown, hamburger on small screens */
+header.top { height: 54px; gap: 14px; box-shadow: 0 2px 8px rgba(16, 37, 60, .18); }
+header.top .brand { color: #fff; letter-spacing: .01em; }
+header.top .brand:hover { text-decoration: none; }
+header.top nav.mainnav { flex-wrap: nowrap; overflow: visible; align-items: center; gap: 2px; flex: 1; min-width: 0; }
+header.top nav a, header.top .more-label { font-size: 13.5px; padding: 7px 10px; transition: background .15s; }
+header.top .more { position: relative; }
+header.top .more-label { display: inline-block; color: #dbe7f3; border-radius: 6px; cursor: pointer; white-space: nowrap; user-select: none; }
+header.top .more.on .more-label, header.top .more:hover .more-label, header.top .more:focus-within .more-label { background: rgba(255,255,255,.15); color: #fff; }
+header.top .more .menu { display: none; position: absolute; top: 100%; left: 0; min-width: 170px; padding: 6px; margin-top: 4px;
+  background: var(--brand); border-radius: 8px; box-shadow: 0 8px 24px rgba(16, 37, 60, .28); z-index: 20; }
+header.top .more:hover .menu, header.top .more:focus-within .menu { display: block; }
+header.top .more .menu a { display: block; }
+header.top .who .role { background: rgba(255,255,255,.15); padding: 1px 7px; border-radius: 10px; margin-left: 4px; }
+header.top .who-mobile { display: none; }
+.nav-toggle { display: none; margin-left: auto; background: transparent; border: 1px solid rgba(255,255,255,.35); font-size: 18px; line-height: 1;
+  padding: 6px 10px; }
+.nav-toggle:hover { background: rgba(255,255,255,.12); }
+
+/* cards, tables, forms: a little more air and clearer structure */
+.card { box-shadow: 0 1px 2px rgba(16, 37, 60, .04); }
+.card > h2:first-child, .card > b:first-child { margin-top: 0; }
+.stat { box-shadow: 0 1px 2px rgba(16, 37, 60, .04); }
+.stat b { font-variant-numeric: tabular-nums; margin-top: 2px; }
+.scroll { background: var(--panel); -webkit-overflow-scrolling: touch; }
+.scroll > table th:first-child, .scroll > table td:first-child { padding-left: 10px; }
+th { letter-spacing: .01em; }
+td { line-height: 1.35; }
+button, .btn { transition: background .15s, box-shadow .15s; line-height: 1.4; }
+button:focus-visible, .btn:focus-visible, a:focus-visible { outline: 2px solid #9cc3e8; outline-offset: 2px; }
+input, select, textarea { min-height: 32px; }
+input[type=checkbox] { min-height: 0; }
+.toolbar { gap: 8px 10px; }
+.flash { box-shadow: 0 1px 2px rgba(16, 37, 60, .05); }
+.login { max-width: 380px; margin: 12vh auto; padding: 26px 26px 20px; }
+.login h1 { justify-content: center; }
+.login button { width: 100%; padding: 9px; font-size: 15px; }
+
+/* ---------------- tablets and below */
+@media (max-width: 1100px) {
+  header.top { flex-wrap: wrap; height: auto; min-height: 54px; padding: 8px 14px; }
+  .nav-toggle { display: inline-block; }
+  header.top > .who { display: none; }
+  header.top nav.mainnav { display: none; order: 10; flex: 1 0 100%; flex-direction: column; align-items: stretch; gap: 2px; padding: 6px 0 4px; }
+  body.nav-open header.top nav.mainnav { display: flex; }
+  header.top nav a, header.top .more-label { padding: 10px 12px; font-size: 15px; }
+  header.top .more-label { display: none; }
+  header.top .more .menu { display: block; position: static; box-shadow: none; padding: 0; margin: 0; background: transparent; min-width: 0; }
+  header.top .who-mobile { display: block; padding: 10px 12px 4px; border-top: 1px solid rgba(255,255,255,.18); margin-top: 4px; font-size: 13px; }
+}
+
+/* ---------------- phones */
+@media (max-width: 760px) {
+  main { padding: 14px 12px 32px; }
+  h1 { font-size: 18px; gap: 8px; }
+  h2 { font-size: 15px; }
+  .card { padding: 12px; border-radius: 8px; }
+  .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .stat { padding: 10px 12px; }
+  .stat b { font-size: 19px; }
+  .stat span { font-size: 11px; }
+  /* every table scrolls sideways inside its box instead of widening the page */
+  main table { display: block; overflow-x: auto; -webkit-overflow-scrolling: touch; max-width: 100%; }
+  main .scroll > table { display: table; overflow: visible; }
+  .row > *, .stats > * { min-width: 0; }                      /* let flex/grid items shrink so their tables scroll */
+  input[type=file] { max-width: 100%; }
+  .toolbar form.row { flex: 1 1 100%; }
+  .scroll { max-height: 72vh; }
+  th, td { padding: 7px 8px; }
+  /* forms: fields go full width, buttons get finger-sized */
+  .row { gap: 10px; }
+  form.row > div, form.row > label, .row > form, .row > .card { flex: 1 1 140px; }
+  .row > .grow { flex: 1 1 100%; }
+  form.row > div input, form.row > div select { width: 100%; }
+  .form-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; }
+  button, .btn { padding: 8px 14px; }
+  button.small, .btn.small { padding: 5px 10px; font-size: 13px; }
+  input, select, textarea { min-height: 38px; font-size: 16px; }   /* 16px stops iOS zooming into fields */
+  input[type=checkbox] { width: 20px; height: 20px; }
+  .chk { margin: 4px 14px 4px 0; }
+  .nav-month { flex-wrap: wrap; }
+  .toolbar > * { flex: 0 0 auto; }
+  .toolbar > span, .toolbar > p, .toolbar > .muted { flex: 1 1 100%; white-space: normal; }
+  .legend { line-height: 2; }
+  .muster td, .muster th { padding: 4px 5px; }
+  .muster td.name { max-width: 130px; overflow: hidden; text-overflow: ellipsis; }
+  .login { margin: 6vh 12px; }
+  .slip, .stmt { padding: 12px !important; }
+}
+@media print {
+  header.top, .nav-toggle { display: none !important; }
+  main table { display: table !important; }
+}
+header.top .who-mobile a { display: inline; padding: 0; font-size: 13px; color: #fff; }
+
+/* dropdown used in toolbars (same look as buttons) */
+.dropdown { position: relative; display: inline-block; }
+.dropdown > .btn { cursor: pointer; }
+.dropdown .menu { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px; min-width: 230px; padding: 6px; z-index: 15;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px rgba(16, 37, 60, .16); }
+.dropdown:hover .menu, .dropdown:focus-within .menu { display: block; }
+.dropdown .menu a { display: block; padding: 8px 10px; border-radius: 6px; color: var(--ink); white-space: nowrap; }
+.dropdown .menu a:hover { background: #eef4fa; text-decoration: none; }
+.toolbar .sep { width: 1px; align-self: stretch; background: var(--line); margin: 0 2px; }
+@media (max-width: 760px) { .dropdown .menu { left: 0; right: auto; } .toolbar .sep { display: none; } }

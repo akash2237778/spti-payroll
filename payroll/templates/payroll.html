@@ -14,15 +14,20 @@
     <form method="post" onsubmit="return confirm('Reopen {{ month }} for changes?')">{{ csrf_field() }}<button class="light" name="action" value="reopen">Reopen</button></form>
     {% endif %}
   {% endif %}
-  <a class="btn light" href="{{ url_for('export_payroll', fmt='xlsx', month=month) }}">Excel</a>
-  <a class="btn light" href="{{ url_for('export_payroll', fmt='csv', month=month) }}">CSV</a>
-  <a class="btn light" href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet</a>
+  <span class="sep"></span>
+  <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}">Cash sheet</a>
   <a class="btn light" href="{{ url_for('esi_report', month=month) }}">ESI report</a>
-  <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}">Cash sheet / record cash paid</a>
-  <a class="btn light" href="{{ url_for('export_cash', month=month) }}">Cash CSV</a>
-  <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">All payslips</a>
-  <a class="btn light" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Attendance statements</a>
-  <a class="btn light" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a>
+  <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">Payslips</a>
+  <a class="btn light" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Statements</a>
+  <div class="dropdown" tabindex="0"><span class="btn light">Downloads ▾</span>
+    <div class="menu">
+      <a href="{{ url_for('export_payroll', fmt='xlsx', month=month) }}">Payroll register (Excel)</a>
+      <a href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a>
+      <a href="{{ url_for('export_payroll', fmt='csv', month=month) }}">Payroll register (CSV)</a>
+      <a href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet (CSV)</a>
+      <a href="{{ url_for('export_cash', month=month) }}">Cash payments (CSV)</a>
+      <a href="{{ url_for('export_esic_mc', month=month) }}">ESIC upload (CSV)</a>
+    </div></div>
   <button class="light" onclick="window.print()">Print</button>
 </div>
 {% if unpriced %}<div class="flash error">{{ unpriced|length }} employee(s) have no salary rate set, so their pay is 0:
