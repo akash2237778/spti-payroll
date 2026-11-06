@@ -371,7 +371,7 @@ def device_action(did, action):
 EMP_FIELDS = ["device_user_id", "emp_code", "name", "department", "designation", "phone", "join_date", "exit_date",
               "shift_id", "category", "salary_type", "salary_rate", "ot_multiplier", "bank_name", "bank_account", "ifsc", "uan",
               "esi_no", "notes", "pay_mode", "bank_value", "comp_hra", "comp_conveyance", "comp_other"]
-EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break", "disabled_person"]
+EMP_FLAGS = ["active", "ot_enabled", "pf_enabled", "esi_enabled", "paid_break", "disabled_person", "multi_punch"]
 
 
 @app.route("/employees")
@@ -408,10 +408,12 @@ def employee_quick(eid):
         stype, rate, mult, ot_on = emp["salary_type"], emp["salary_rate"], emp["ot_multiplier"], emp["ot_enabled"]
         category = emp["category"] or "worker"
     vals = (name, f.get("department", "").strip(), f.get("designation", "").strip(), int(f.get("shift_id") or 0) or None,
-            stype, rate, ot_on, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, category, eid)
+            stype, rate, ot_on, mult, 1 if f.get("active") else 0, 1 if f.get("paid_break") else 0, category,
+            1 if f.get("multi_punch") else 0, eid)
     g.conn.execute("""UPDATE employees SET name=?, department=?, designation=?, shift_id=?, salary_type=?, salary_rate=?,
-                      ot_enabled=?, ot_multiplier=?, active=?, paid_break=?, category=? WHERE id=?""", vals)
-    detail = {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "active": vals[8], "paid_break": vals[9]}
+                      ot_enabled=?, ot_multiplier=?, active=?, paid_break=?, category=?, multi_punch=? WHERE id=?""", vals)
+    detail = {"id": eid, "name": name, "dept": vals[1], "shift": vals[3], "active": vals[8], "paid_break": vals[9],
+              "multi_punch": vals[11]}
     if can_pay():
         detail.update(type=stype, rate=rate, ot=ot_on, mult=mult, category=category)
     audit("employee_quick_edit", detail)
@@ -1027,6 +1029,13 @@ def att_day(eid, date):
                 if err:
                     flash(err, "error")
                     return redirect(f.get("back") or request.url)
+        elif act == "gate_add":
+            err = save_gate_pass(eid, dict(f, work_date=date))
+            if err:
+                flash(err, "error")
+                return redirect(f.get("back") or request.url)
+        elif act == "gate_delete":
+            delete_gate_pass(int(f["gate_id"]))
         elif act == "apply_suggest":
             add_manual_punch(emp, dt.datetime.strptime(f["ts"], TS_FMT), f["role"], "suggested fix accepted")
             if f.get("orphan_id") and f["orphan_id"] != "None":
@@ -1048,6 +1057,7 @@ def att_day(eid, date):
     mine = {t.strftime(TS_FMT) for s in rec["sessions"] for t in s["punches"]}
     ov = g.conn.execute("SELECT * FROM day_overrides WHERE employee_id=? AND work_date=?", (eid, date)).fetchone()
     lv = g.conn.execute("SELECT * FROM leaves WHERE employee_id=? AND leave_date=?", (eid, date)).fetchone()
+    gates = g.conn.execute("SELECT * FROM gate_passes WHERE employee_id=? AND work_date=? ORDER BY out_time", (eid, date)).fetchall()
     first = rec["sessions"][0] if rec["sessions"] else None
     sug = rec["suggest"]
     day_shift = rec["shift"]
@@ -1060,7 +1070,7 @@ def att_day(eid, date):
         default_out = engine.shift_bounds(d, day_shift)[1]
     if sug and sug["role"] == "in":
         default_in, default_out = sug["ts"], sug["of"]
-    return render_template("day_edit.html", emp=emp, d=d, rec=rec, raw=raw, mine=mine, ov=ov, lv=lv, shift=day_shift,
+    return render_template("day_edit.html", emp=emp, d=d, rec=rec, raw=raw, mine=mine, ov=ov, lv=lv, shift=day_shift, gates=gates,
                            shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
                            default_in=default_in, default_out=default_out, typical=data["typical"],
                            locked=payroll.is_locked(g.conn, date), back=request.args.get("back", ""))
@@ -1078,6 +1088,8 @@ def _exception_items(rows):
                 kind, reason = "mp", "Missing punch"
             elif "unpaired punch" in d["flags"]:
                 kind, reason = "mp", "Extra unpaired punch"
+            elif "odd in/out punches" in d["flags"]:
+                kind, reason = "mp", "Odd number of in/out punches (one missing?)"
             elif "long duty" in d["flags"]:
                 h = max((s["end"] - s["start"]).total_seconds() / 3600 for s in d["sessions"] if not s["orphan"])
                 kind, reason = "long", f"Long duty {h:.1f} h"
@@ -1141,6 +1153,67 @@ def exceptions():
         items = [i for i in items if i["kind"] == kind]
     prev, nxt = month_nav(month)
     return render_template("exceptions.html", items=items, month=month, prev=prev, nxt=nxt, counts=counts, kind=kind)
+
+
+def save_gate_pass(emp_id, f):
+    """Add a gate pass from a form. Returns an error message or None."""
+    work_date = f.get("work_date", "")
+    try:
+        dt.date.fromisoformat(work_date)
+        engine.parse_hm(f["out_time"])
+        if f.get("in_time"):
+            engine.parse_hm(f["in_time"])
+    except (ValueError, KeyError):
+        return "Enter a date and an out time (and the return time if they came back)"
+    ensure_unlocked(work_date)
+    kind = f.get("kind") if f.get("kind") in ("personal", "official") else "personal"
+    g.conn.execute("""INSERT INTO gate_passes(employee_id, work_date, out_time, in_time, kind, reason, approved_by, created_by, created_at)
+                      VALUES (?,?,?,?,?,?,?,?,?)""",
+                   (emp_id, work_date, f["out_time"], f.get("in_time") or None, kind, f.get("reason", "").strip(),
+                    f.get("approved_by", "").strip(), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+    audit("gate_pass_add", {"emp": emp_id, "date": work_date, "out": f["out_time"], "in": f.get("in_time"), "kind": kind})
+    return None
+
+
+def delete_gate_pass(gid):
+    gp = g.conn.execute("SELECT * FROM gate_passes WHERE id = ?", (gid,)).fetchone() or abort(404)
+    ensure_unlocked(gp["work_date"])
+    g.conn.execute("DELETE FROM gate_passes WHERE id = ?", (gid,))
+    audit("gate_pass_delete", {k: gp[k] for k in gp.keys()})
+
+
+@app.route("/gatepass", methods=["GET", "POST"])
+def gate_passes():
+    """Gate passes: employees going out of the premises during the shift (personal time is deducted)."""
+    month = cur_month()
+    if request.method == "POST":
+        require_edit()
+        f = request.form
+        if f.get("delete"):
+            delete_gate_pass(int(f["delete"]))
+            flash("Gate pass removed; attendance recalculated", "ok")
+        else:
+            err = save_gate_pass(int(f["employee_id"]), f)
+            flash(err or "Gate pass added; attendance recalculated", "error" if err else "ok")
+        back = f.get("back", "")
+        return redirect(back if back.startswith("/") and not back.startswith("//") else url_for("gate_passes", month=month))
+    start, end = engine.month_range(month)
+    rows = g.conn.execute("""SELECT gp.*, e.name, e.device_user_id FROM gate_passes gp JOIN employees e ON e.id = gp.employee_id
+                             WHERE gp.work_date BETWEEN ? AND ? ORDER BY gp.work_date DESC, gp.out_time""",
+                          (start.isoformat(), end.isoformat())).fetchall()
+    # minutes each pass actually changed (from the attendance engine)
+    ids = {r["employee_id"] for r in rows}
+    effect = {}
+    if ids:
+        emps = [dict(e) for e in g.conn.execute(f"SELECT * FROM employees WHERE id IN ({','.join('?' * len(ids))})", list(ids))]
+        for eid, d in engine.employee_days(g.conn, emps, start, end, g.settings).items():
+            for day in d["days"]:
+                if day.get("gate_personal_min") or day.get("gate_official_min"):
+                    effect[(eid, day["date"].isoformat())] = (day.get("gate_personal_min", 0), day.get("gate_official_min", 0), day)
+    emps_all = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY " + emp_order_sql()).fetchall()
+    prev, nxt = month_nav(month)
+    return render_template("gatepass.html", rows=rows, effect=effect, emps=emps_all, month=month, prev=prev, nxt=nxt,
+                           today=dt.date.today().isoformat(), locked=payroll.run_status(g.conn, month) == "final")
 
 
 @app.route("/leaves", methods=["GET", "POST"])
@@ -1252,7 +1325,7 @@ def changes_undo():
     kind, rid = f["kind"], int(f["id"])
     table = {"punch_added": "punches", "punch_role": "punches", "status": "day_overrides", "leave": "leaves",
              "penalty": "late_penalties", "roster": "employee_shifts", "holiday": "holidays",
-             "month_total": "month_overrides"}.get(kind) or abort(400)
+             "month_total": "month_overrides", "gate_pass": "gate_passes"}.get(kind) or abort(400)
     row = g.conn.execute(f"SELECT * FROM {table} WHERE id = ?", (rid,)).fetchone() or abort(404)
     date = (row["ts"][:10] if table == "punches" else row["month"] + "-01" if table == "month_overrides"
             else row["work_date"] if "work_date" in row.keys()

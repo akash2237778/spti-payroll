@@ -621,3 +621,33 @@ def test_salary_components_esi_pf_and_bank():
     assert not off["components"] and off["esi_wages"] == 30000 and not off["esi_covered"] and off["pf"] == 1800
     bad = payroll.salary_parts(dict(emp, comp_hra=40000), on, 30000)                # components above the rate: ignored
     assert bad["basic_da"] == 30000
+
+
+# ---------------------------------------------------------------- multiple in/out per employee; gate passes
+
+def test_multiple_in_out_sums_pairs():
+    punches = [t(9), t(10), t(10, 30), t(12), t(12, 30), t(17, 30)]
+    one = engine.evaluate_day(D, punches, SHIFT8H, S, today=TODAY)                    # default: first in -> last out
+    assert one["worked_min"] == 480
+    multi_sessions = engine.pair_sessions(punches, SHIFT8H, dict(S, break_pair_max_h=engine.MULTI_GAP_MAX_H))
+    m = engine.evaluate_day(D, None, SHIFT8H, S, sessions=multi_sessions, today=TODAY, multi=True)
+    assert m["worked_min"] == 60 + 90 + 300 and len(m["pairs"]) == 3                 # gaps are breaks, lunch not taken twice
+    odd = engine.evaluate_day(D, None, SHIFT8H, S, today=TODAY, multi=True,
+                              sessions=engine.pair_sessions([t(9), t(10), t(10, 30), t(17, 30), t(17, 40)], SHIFT8H,
+                                                            dict(S, break_pair_max_h=10)))
+    assert "odd in/out punches" in odd["flags"] or "unpaired punch" in odd["flags"]
+
+
+def test_gate_pass_personal_and_official():
+    day = [t(9), t(17, 30)]
+    gp = lambda **k: dict({"kind": "personal", "in_time": None}, **k)              # noqa: E731
+    r = engine.evaluate_day(D, day, SHIFT8H, S, today=TODAY, gate_passes=[gp(out_time="11:00", in_time="12:00")])
+    assert r["gate_personal_min"] == 60 and r["worked_min"] == 420 and r["status"] == "P" and r["early_short_min"] == 60
+    r = engine.evaluate_day(D, day, SHIFT8H, S, today=TODAY, gate_passes=[gp(out_time="12:45", in_time="13:45")])
+    assert r["gate_personal_min"] == 30 and r["worked_min"] == 450                  # lunch half-hour not deducted twice
+    r = engine.evaluate_day(D, [t(9), t(14)], SHIFT8H, S, today=TODAY,
+                            gate_passes=[gp(kind="official", out_time="14:00")])      # left on duty, no return punch
+    assert r["gate_official_min"] == 210 and r["worked_min"] == 270 + 210 and r["status"] == "P"
+    r = engine.evaluate_day(D, [t(9), t(14)], SHIFT8H, S, today=TODAY,
+                            gate_passes=[gp(out_time="14:00")])                       # personal, punched out: nothing extra
+    assert r.get("gate_personal_min", 0) == 0 and r["worked_min"] == 270

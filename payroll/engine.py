@@ -31,6 +31,7 @@ EXCESS_WEIGHT = 0.15       # per hour the session is longer than the standard sh
 ABSORB_COST = 0.3          # per inside punch that forms a short break pair (lunch out -> lunch in)
 STRAY_COST = 3.0           # per inside punch that does not look like a break pair
 BREAK_PAIR_MAX_H = 3.0     # a lunch/tea break is at most this long
+MULTI_GAP_MAX_H = 10.0     # employees allowed several in/out a day: a gap between pairs may be this long
 SHORT_SESSION_COST = 3.0   # sessions under an hour are unlikely to be real
 MAX_INSIDE = 8             # max punches inside one session
 STREAM_MARGIN_DAYS = 3     # extra days loaded each side so cross-day sessions pair correctly
@@ -114,11 +115,13 @@ def pair_sessions(punches, shift, settings, typical=None, expect=None):
             return fixed
     max_h = float(settings.get("max_duty_hours") or 26)
 
+    gap_max = float(settings.get("break_pair_max_h") or BREAK_PAIR_MAX_H)
+
     def inside_cost(i, j):
         inside = [p["ts"] for p in ps[i + 1:j]]
         if not inside:
             return 0.0
-        if len(inside) % 2 == 0 and all((inside[k + 1] - inside[k]).total_seconds() / 3600 <= BREAK_PAIR_MAX_H
+        if len(inside) % 2 == 0 and all((inside[k + 1] - inside[k]).total_seconds() / 3600 <= gap_max
                                         for k in range(0, len(inside), 2)):
             return ABSORB_COST * len(inside)
         return STRAY_COST * len(inside)
@@ -217,8 +220,48 @@ def _override_session(work_date, ov):
 # Day evaluation
 # ------------------------------------------------------------------------------------------------
 
+def _clock(work_date, hm, after=None):
+    t = dt.datetime.combine(work_date, parse_hm(hm))
+    if after is not None and t <= after:
+        t += dt.timedelta(days=1)       # night shift: time after midnight
+    return t
+
+
+def _overlap(a1, a2, b1, b2):
+    return max(0.0, (min(a2, b2) - max(a1, b1)).total_seconds() / 60)
+
+
+def apply_gate_passes(work_date, complete, gate_passes, shift, paid_break=False):
+    """(personal minutes to deduct, official minutes to add) for one day.
+    Personal: time out of the premises inside the punched work spans (lunch already deducted is not counted twice).
+    Official: time on official duty that is NOT already inside a punched span (e.g. left on duty, no return punch)."""
+    spans = [(s["start"], s["end"]) for s in complete]
+    first = spans[0][0] if spans else None
+    last = spans[-1][1] if spans else None
+    s_start, s_end = shift_bounds(work_date, shift)
+    lunch = None
+    if shift.get("break_start") and not paid_break:
+        ls = dt.datetime.combine(work_date, parse_hm(shift["break_start"]))
+        lunch = (ls, ls + dt.timedelta(minutes=int(shift.get("break_min") or 0)))
+    personal = official = 0.0
+    for gp in gate_passes:
+        out = _clock(work_date, gp["out_time"], after=(first - dt.timedelta(hours=1)) if first else None)
+        back = _clock(work_date, gp["in_time"], after=out) if gp.get("in_time") else max(last or s_end, s_end if gp["kind"] == "official" else out)
+        if back <= out:
+            continue
+        inside = sum(_overlap(out, back, a, b) for a, b in spans)
+        if lunch:
+            inside -= sum(_overlap(max(out, a), min(back, b), lunch[0], lunch[1]) for a, b in spans if min(back, b) > max(out, a))
+        inside = max(0.0, inside)
+        if gp["kind"] == "official":
+            official += max(0.0, (back - out).total_seconds() / 60 - sum(_overlap(out, back, a, b) for a, b in spans))
+        else:
+            personal += inside
+    return int(round(personal)), int(round(official))
+
+
 def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_off=False, holiday=None, leave=None,
-                 override=None, active=True, today=None, now=None, paid_break=False):
+                 override=None, active=True, today=None, now=None, paid_break=False, multi=False, gate_passes=()):
     """Return a dict describing one employee-day.
 
     Either pass `sessions` (already paired from the whole stream) or plain `punches` for this day,
@@ -253,8 +296,18 @@ def evaluate_day(work_date, punches, shift, settings, *, sessions=None, weekly_o
     if work_date > today and not times and not forced_status and not leave:
         return rec
 
-    mode = settings.get("calc_mode", "first_last")
+    mode = "pairs" if multi else settings.get("calc_mode", "first_last")
     mins = sum(session_minutes(s, shift, mode, paid_break) for s in complete)
+    if multi:
+        rec["pairs"] = [(s["punches"][k], s["punches"][k + 1]) for s in complete for k in range(0, len(s["punches"]) - 1, 2)
+                        if len(s["punches"]) % 2 == 0]
+        if any(len(s["punches"]) % 2 for s in complete):
+            rec["flags"].append("odd in/out punches")
+    if gate_passes and (complete or any(gp["kind"] == "official" for gp in gate_passes)):
+        personal, official = apply_gate_passes(work_date, complete, gate_passes, shift, paid_break)
+        mins = max(0, mins - personal) + official
+        rec["gate_personal_min"], rec["gate_official_min"] = personal, official
+        rec["flags"].append("gate pass")
     rec["worked_min"] = mins
     std = ot_base_minutes(shift, paid_break)
     s_start, s_end = shift_bounds(work_date, shift)
@@ -422,8 +475,11 @@ def load_context(conn, start, end):
     penalties = defaultdict(dict)
     for r in conn.execute("SELECT * FROM late_penalties WHERE work_date BETWEEN ? AND ?", (start.isoformat(), end.isoformat())):
         penalties[r["employee_id"]][r["work_date"]] = int(r["minutes"])
+    gates = defaultdict(lambda: defaultdict(list))
+    for r in conn.execute("SELECT * FROM gate_passes WHERE work_date BETWEEN ? AND ? ORDER BY out_time", (start.isoformat(), end.isoformat())):
+        gates[r["employee_id"]][r["work_date"]].append(dict(r))
     return {"shifts": shifts, "holidays": holidays, "leaves": leaves, "overrides": overrides, "assignments": assignments,
-            "penalties": penalties}
+            "penalties": penalties, "gates": gates}
 
 
 def suggest_penalty(late_min, settings):
@@ -547,6 +603,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
     if machine_only:
         for k in ("leaves", "overrides", "assignments", "penalties"):
             ctx[k] = defaultdict(dict) if k != "assignments" else defaultdict(list)
+        ctx["gates"] = defaultdict(lambda: defaultdict(list))
     default_shift = next(iter(ctx["shifts"].values()))
     base_by_uid = {e["device_user_id"]: ctx["shifts"].get(e["shift_id"], default_shift) for e in employees}
     streams = load_streams(conn, list(base_by_uid), outer_start, outer_end, int(settings.get("dedup_seconds") or 0), machine_only)
@@ -555,7 +612,9 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
         base_shift = base_by_uid[e["device_user_id"]]
         shift_on = make_shift_on(ctx["assignments"].get(e["id"], []), base_shift, ctx["shifts"])
         stream = streams.get(e["device_user_id"], [])
-        sessions, typ = employee_sessions(stream, base_shift, settings, shift_on)
+        multi = bool(e.get("multi_punch"))
+        emp_settings = dict(settings, break_pair_max_h=MULTI_GAP_MAX_H) if multi else settings
+        sessions, typ = employee_sessions(stream, base_shift, emp_settings, shift_on)
         by_day = defaultdict(list)
         all_ts = [p["ts"] for p in stream]
         for s in sessions:
@@ -571,7 +630,8 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
                 d, None, shift, settings, sessions=by_day.get(d, []),
                 weekly_off=d.weekday() in offs, holiday=ctx["holidays"].get(ds),
                 leave=ctx["leaves"][e["id"]].get(ds), override=ctx["overrides"][e["id"]].get(ds),
-                active=active, today=today, paid_break=bool(e.get("paid_break")))
+                active=active, today=today, paid_break=bool(e.get("paid_break")), multi=multi,
+                gate_passes=ctx["gates"][e["id"]].get(ds, ()))
             rec["shift"] = shift
             rec["late_penalty_min"] = ctx["penalties"][e["id"]].get(ds, 0)
             rec["late_penalty_set"] = ds in ctx["penalties"][e["id"]]

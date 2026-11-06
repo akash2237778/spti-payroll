@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS employees (
     paid_break INTEGER DEFAULT 0,          -- 1 = lunch break is paid time (not deducted)
     disabled_person INTEGER DEFAULT 0,     -- person with disability: ESI ceiling 25,000
     comp_hra REAL DEFAULT 0, comp_conveyance REAL DEFAULT 0, comp_other REAL DEFAULT 0,  -- parts of salary_rate
+    multi_punch INTEGER DEFAULT 0,         -- 1 = several in/out per day: worked time = sum of in->out pairs
     weekly_off TEXT DEFAULT '6',           -- python weekday numbers, Mon=0 .. Sun=6
     pf_enabled INTEGER DEFAULT 0, esi_enabled INTEGER DEFAULT 0,
     bank_name TEXT DEFAULT '', bank_account TEXT DEFAULT '', ifsc TEXT DEFAULT '',
@@ -74,6 +75,13 @@ CREATE TABLE IF NOT EXISTS pay_splits (   -- this month's bank amount set by han
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     month TEXT NOT NULL, bank_amount REAL NOT NULL, note TEXT DEFAULT '', created_by TEXT, created_at TEXT,
     UNIQUE(employee_id, month));
+
+CREATE TABLE IF NOT EXISTS gate_passes (   -- employee left the premises during the shift (entered by hand)
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    work_date TEXT NOT NULL, out_time TEXT NOT NULL, in_time TEXT,        -- in_time blank = did not come back
+    kind TEXT NOT NULL DEFAULT 'personal',                               -- personal: deducted | official: counts as work
+    reason TEXT DEFAULT '', approved_by TEXT DEFAULT '', created_by TEXT, created_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_gatepass ON gate_passes(employee_id, work_date);
 
 CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may differ from the calculated cash)
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
@@ -193,7 +201,8 @@ def init_db():
                                 ("employees", "pay_mode", "TEXT DEFAULT 'bank'"), ("employees", "bank_value", "REAL DEFAULT 0"),
                                 ("employees", "disabled_person", "INTEGER DEFAULT 0"),
                                 ("employees", "comp_hra", "REAL DEFAULT 0"), ("employees", "comp_conveyance", "REAL DEFAULT 0"),
-                                ("employees", "comp_other", "REAL DEFAULT 0")):
+                                ("employees", "comp_other", "REAL DEFAULT 0"),
+                                ("employees", "multi_punch", "INTEGER DEFAULT 0")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

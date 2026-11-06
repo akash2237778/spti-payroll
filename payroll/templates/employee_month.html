@@ -69,7 +69,10 @@
     {% set dc = day_credit(d, s.get('wo_paid', 1)) %}
     <td class="n">{{ fmt_min(d.early_short_min) if d.early_short_min and row.pay.salary_type != 'hourly' else '' }}</td>
     <td class="n">{% if dc %}<b>{{ dc|days }}</b>{% endif %}</td>
-    <td class="small muted">{% for t in d.punches %}{{ t.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}</td>
+    <td class="small muted">{% if d.get('pairs') %}{% for a, b in d.pairs %}{{ a.strftime('%H:%M') }}–{{ b.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}
+      {% else %}{% for t in d.punches %}{{ t.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}{% endif %}
+      {% if d.get('gate_personal_min') %}<br><span style="color:var(--bad)">gate pass −{{ fmt_min(d.gate_personal_min) }}</span>{% endif %}
+      {% if d.get('gate_official_min') %}<br><span style="color:var(--ok)">official +{{ fmt_min(d.gate_official_min) }}</span>{% endif %}</td>
     <td class="small">{{ d.holiday or '' }} {{ d.leave_type or '' }} {% for f in d.flags %}<span class="badge warn">{{ f }}</span> {% endfor %}</td>
     <td style="white-space:nowrap" class="noprint">
       {% if not locked and can_edit %}

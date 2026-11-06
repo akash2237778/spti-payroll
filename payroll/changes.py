@@ -15,6 +15,7 @@ KINDS = {
     "roster": "Shift changed",
     "holiday": "Holiday",
     "month_total": "Final totals edited",
+    "gate_pass": "Gate pass",
 }
 TS = "%Y-%m-%d %H:%M:%S"
 
@@ -75,6 +76,12 @@ def collect(conn, start, end, emp_id=None):
         changed = f"{lv['leave_type']} {'paid' if lv['paid'] else 'unpaid'}{' ½ day' if lv['half_day'] else ''}"
         add("leave", emps.get(lv["employee_id"]), dt.date.fromisoformat(lv["leave_date"]), "", changed, lv["reason"],
             lv["created_by"], lv["created_at"], {"kind": "leave", "id": lv["id"]})
+
+    for gp in conn.execute("SELECT * FROM gate_passes WHERE work_date BETWEEN ? AND ?", (s, e)):
+        span = f"{gp['out_time']}–{gp['in_time'] or 'not back'}"
+        add("gate_pass", emps.get(gp["employee_id"]), dt.date.fromisoformat(gp["work_date"]), "",
+            f"{gp['kind']} gate pass {span}", gp["reason"] + (f" (approved: {gp['approved_by']})" if gp["approved_by"] else ""),
+            gp["created_by"], gp["created_at"], {"kind": "gate_pass", "id": gp["id"]})
 
     for lp in conn.execute("SELECT * FROM late_penalties WHERE work_date BETWEEN ? AND ?", (s, e)):
         add("penalty", emps.get(lp["employee_id"]), dt.date.fromisoformat(lp["work_date"]), "full OT",

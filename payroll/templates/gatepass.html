@@ -1,0 +1,46 @@
+{% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
+{% block title %}Gate pass {{ month }}{% endblock %}
+{% block body %}
+<h1>Gate pass {{ monthnav('gate_passes', month, prev, nxt) }}
+  <button class="light small noprint" onclick="window.print()">Print</button>
+  {% if locked %}<span class="badge bad">payroll finalized - read only</span>{% endif %}</h1>
+<p class="muted">Record an employee going out of the premises during the shift. <b>Personal</b>: the time out is deducted from
+worked hours. <b>Official</b>: counts as working time, even if they did not punch back in. Leave "Back at" empty if they did not return.</p>
+
+{% if can_edit and not locked %}
+<form method="post" class="card noprint">{{ csrf_field() }}
+  <div class="form-grid">
+    <div><label>Employee</label><select name="employee_id" required>{% for e in emps %}<option value="{{ e.id }}">{{ e.name }} (#{{ e.device_user_id }})</option>{% endfor %}</select></div>
+    <div><label>Date</label><input type="date" name="work_date" value="{{ today if today[:7] == month else month ~ '-01' }}" required></div>
+    <div><label>Went out at</label><input type="time" name="out_time" required></div>
+    <div><label>Back at (blank = did not return)</label><input type="time" name="in_time"></div>
+    <div><label>Type</label><select name="kind"><option value="personal">Personal (deduct time)</option><option value="official">Official duty (counts as work)</option></select></div>
+    <div><label>Approved by</label><input name="approved_by" placeholder="supervisor"></div>
+    <div style="grid-column: 1 / -1"><label>Reason</label><input name="reason" style="width:100%" placeholder="bank work / doctor / site visit"></div>
+  </div>
+  <p style="margin:10px 0 0"><button>Add gate pass</button></p>
+</form>
+{% endif %}
+
+<div class="scroll" style="max-height:none"><table>
+  <tr><th>Date</th><th>Employee</th><th>Type</th><th>Out</th><th>Back</th><th class="n">Duration</th><th class="n">Effect on worked time</th>
+    <th>Reason</th><th>Approved by</th><th class="noprint">Entered by</th><th class="noprint"></th></tr>
+  {% for g in rows %}{% set eff = effect.get((g.employee_id, g.work_date)) %}
+  <tr>
+    <td style="white-space:nowrap">{{ g.work_date[8:] }} {{ g.work_date|dayname }}</td>
+    <td><a href="{{ url_for('att_day', eid=g.employee_id, date=g.work_date, back=request.full_path) }}">{{ g.name }}</a> <span class="muted small">#{{ g.device_user_id }}</span></td>
+    <td><span class="badge {{ 'warn' if g.kind == 'personal' else 'ok' }}">{{ g.kind }}</span></td>
+    <td>{{ g.out_time }}</td><td>{{ g.in_time or '—' }}</td>
+    <td class="n">{% if g.in_time %}{% set a = g.out_time.split(':') %}{% set b = g.in_time.split(':') %}{% set m = (b[0]|int * 60 + b[1]|int) - (a[0]|int * 60 + a[1]|int) %}{{ fmt_min(m if m >= 0 else m + 1440) }}{% else %}—{% endif %}</td>
+    <td class="n small">{% if eff %}{% if eff[0] %}<b style="color:var(--bad)">−{{ fmt_min(eff[0]) }}</b>{% endif %}{% if eff[1] %} <b style="color:var(--ok)">+{{ fmt_min(eff[1]) }}</b>{% endif %}
+      <div class="muted">day {{ eff[2].status }} · {{ fmt_min(eff[2].worked_min) }}</div>{% else %}<span class="muted">none</span>{% endif %}</td>
+    <td class="small">{{ g.reason }}</td><td class="small">{{ g.approved_by }}</td>
+    <td class="small muted noprint">{{ g.created_by }} {{ (g.created_at or '')[:16] }}</td>
+    <td class="noprint">{% if can_edit and not locked %}<form method="post" class="inline" onsubmit="return confirm('Remove this gate pass?')">{{ csrf_field() }}
+      <input type="hidden" name="delete" value="{{ g.id }}"><button class="danger small">Remove</button></form>{% endif %}</td>
+  </tr>
+  {% else %}<tr><td colspan="11" class="muted">No gate passes in {{ month }}.</td></tr>{% endfor %}
+</table></div>
+<p class="small muted">Personal time already outside the punched hours (e.g. the employee punched out at the gate) is not deducted twice,
+and lunch time is not counted twice.</p>
+{% endblock %}

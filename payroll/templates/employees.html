@@ -49,7 +49,9 @@
       x<input form="{{ fid }}" name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier }}" style="width:55px"></span></td>
     {% endif %}
     <td><span class="view">{{ 'paid' if e.paid_break else 'unpaid' }}</span>
-      <label class="chk edit"><input type="checkbox" form="{{ fid }}" name="paid_break" {{ 'checked' if e.paid_break }}> paid</label></td>
+      <label class="chk edit"><input type="checkbox" form="{{ fid }}" name="paid_break" {{ 'checked' if e.paid_break }}> paid</label>
+      {% if e.multi_punch %}<span class="badge view" title="Multiple in/out a day">multi in/out</span>{% endif %}
+      <label class="chk edit"><input type="checkbox" form="{{ fid }}" name="multi_punch" {{ 'checked' if e.multi_punch }}> multi in/out</label></td>
     {% if can_pay %}<td>{{ 'PF ' if e.pf_enabled }}{{ 'ESI' if e.esi_enabled }}</td>{% endif %}
     <td class="small">{{ e.join_date or '' }}</td><td class="small">{{ last.get(e.device_user_id, '') }}</td>
     <td><span class="view">{% if e.active %}<span class="badge ok">active</span>{% else %}<span class="badge">inactive</span>{% endif %}</span>

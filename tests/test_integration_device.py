@@ -642,3 +642,37 @@ def test_end_to_end(client):
     r = post(c, f"/employees/{kam}/salary", salary_rate="30000", comp_hra="40000", category="worker", salary_type="monthly")
     assert "cannot be more than the salary rate" in r.data.decode()
     post(c, "/settings", action="settings")                               # components off again
+
+    # 19. gate pass entries + optional multiple in/out per employee
+    with db.tx() as conn:
+        g19 = conn.execute("SELECT id FROM employees WHERE device_user_id='3'").fetchone()["id"]
+        base19 = [d for d in pr.compute_month(conn, "2026-10", employee_ids={g19})[0]["days"] if d["in"] and d["out"]][0]
+    day19 = base19["date"].isoformat()
+    login_as("hr1", "hrpass123")                                               # HR can record gate passes
+    post(c, "/gatepass?month=2026-10", employee_id=str(g19), work_date=day19, out_time="11:00", in_time="12:00",
+         kind="personal", reason="bank work", approved_by="supervisor")
+    with db.tx() as conn:
+        d19 = next(d for d in pr.compute_month(conn, "2026-10", employee_ids={g19})[0]["days"] if d["date"] == base19["date"])
+        gid = conn.execute("SELECT id FROM gate_passes WHERE employee_id=?", (g19,)).fetchone()["id"]
+    assert d19["gate_personal_min"] == 60 and d19["worked_min"] == base19["worked_min"] - 60
+    gp_page = c.get("/gatepass?month=2026-10").data.decode()
+    assert "bank work" in gp_page and "−1:00" in gp_page
+    assert "Gate pass" in c.get(f"/changes?month=2026-10&kind=gate_pass").data.decode()
+    assert "Gate pass" in c.get(f"/attendance/day/{g19}/{day19}").data.decode()
+    post(c, "/changes/undo", kind="gate_pass", id=str(gid))
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM gate_passes WHERE id=?", (gid,)).fetchone()
+    post(c, f"/attendance/day/{g19}/{day19}", action="gate_add", out_time="15:00", in_time="", kind="official", reason="site visit")
+    with db.tx() as conn:
+        assert conn.execute("SELECT kind FROM gate_passes WHERE employee_id=?", (g19,)).fetchone()["kind"] == "official"
+    # multi in/out is off by default and can be switched on per employee
+    with db.tx() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM employees WHERE multi_punch=1").fetchone()[0] == 0
+    post(c, f"/employees/{g19}/quick", name="Pawan", department="", designation="", shift_id="1", active="on", multi_punch="on")
+    with db.tx() as conn:
+        assert conn.execute("SELECT multi_punch FROM employees WHERE id=?", (g19,)).fetchone()[0] == 1
+        assert pr.compute_month(conn, "2026-10", employee_ids={g19})
+    assert "multi in/out" in c.get("/employees").data.decode()
+    login_as("viewer1", "viewer123")
+    assert post(c, "/gatepass?month=2026-10", employee_id=str(g19), work_date=day19, out_time="10:00").status_code == 403
+    login_as("admin", "secret123")

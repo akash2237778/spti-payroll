@@ -61,6 +61,27 @@
   {% endif %}
 </div>
 <div class="card grow">
+  <h2>Gate pass</h2>
+  {% if gates %}<table style="margin-bottom:8px">
+    <tr><th>Type</th><th>Out</th><th>Back</th><th>Reason</th><th></th></tr>
+    {% for gp in gates %}<tr><td><span class="badge {{ 'warn' if gp.kind == 'personal' else 'ok' }}">{{ gp.kind }}</span></td>
+      <td>{{ gp.out_time }}</td><td>{{ gp.in_time or 'not back' }}</td><td class="small">{{ gp.reason }}{{ (' · approved: ' ~ gp.approved_by) if gp.approved_by }}</td>
+      <td>{% if not ro %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="action" value="gate_delete">
+        <input type="hidden" name="gate_id" value="{{ gp.id }}"><input type="hidden" name="back" value="{{ request.full_path }}">
+        <button class="light small">Remove</button></form>{% endif %}</td></tr>{% endfor %}
+  </table>
+  <p class="small">{% if rec.get('gate_personal_min') %}Personal time deducted: <b>{{ fmt_min(rec.gate_personal_min) }}</b>. {% endif %}
+    {% if rec.get('gate_official_min') %}Official duty added: <b>{{ fmt_min(rec.gate_official_min) }}</b>.{% endif %}</p>
+  {% endif %}
+  {% if not ro %}
+  <form method="post" class="row" style="align-items:flex-end">{{ csrf_field() }}<input type="hidden" name="action" value="gate_add">
+    <input type="hidden" name="back" value="{{ request.full_path }}">
+    <div><label>Out</label><input type="time" name="out_time" required></div>
+    <div><label>Back (blank = not back)</label><input type="time" name="in_time"></div>
+    <div><label>Type</label><select name="kind"><option value="personal">Personal</option><option value="official">Official</option></select></div>
+    <div class="grow"><label>Reason / approved by</label><input name="reason" style="width:100%"></div>
+    <button>Add gate pass</button></form>
+  {% endif %}
   <h2>Force day status</h2>
   {% if ov %}<p class="small">Current: <b>{{ ov.status or '-' }}</b>{% if ov.in_time %} (times {{ ov.in_time }}–{{ ov.out_time }}){% endif %}, by {{ ov.created_by }} ({{ ov.reason }})</p>{% endif %}
   {% if not ro %}
