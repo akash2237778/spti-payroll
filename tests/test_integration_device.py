@@ -582,6 +582,12 @@ def test_end_to_end(client):
     post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1234", note="after finalize")
     with db.tx() as conn:
         assert conn.execute("SELECT paid_amount FROM cash_payments WHERE employee_id=? AND month='2026-09'", (sep_emp,)).fetchone()[0] == 1234
+    # any amount is allowed, paise and thousands separators included
+    post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1,234.75", note="odd amount")
+    with db.tx() as conn:
+        assert conn.execute("SELECT paid_amount FROM cash_payments WHERE employee_id=? AND month='2026-09'", (sep_emp,)).fetchone()[0] == 1234.75
+    page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert 'value="1234.75"' in page and 'step="any"' in page
     post(c, "/payroll?month=2026-09", action="reopen")
     # record an advance from the attendance page, then deduct it there
     pg16 = c.get(f"/attendance/employee/{sep_emp}?month=2026-10").data.decode()

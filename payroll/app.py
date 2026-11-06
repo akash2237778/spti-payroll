@@ -1562,7 +1562,7 @@ def save_cash_paid(eid, month, text, note=""):
     if not text:
         n = g.conn.execute("DELETE FROM cash_payments WHERE employee_id=? AND month=? AND carried_month IS NULL", (eid, month)).rowcount
         return n
-    amount = float(text)
+    amount = round(float(text.replace(",", "")), 2)   # any amount (rounded off or not), to the paisa
     if amount < 0:
         raise ValueError("negative")
     old = g.conn.execute("SELECT * FROM cash_payments WHERE employee_id=? AND month=?", (eid, month)).fetchone()

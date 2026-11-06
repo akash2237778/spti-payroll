@@ -250,7 +250,7 @@
       </table>
       {% if not (cp and cp.carried_month) %}
       <div class="row" style="align-items:flex-end;margin-top:6px">
-        <div><label>Paid ({{ cur }})</label><input name="paid_amount" type="number" step="1" min="0" style="width:110px" value="{{ cp.paid_amount|int if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
+        <div><label>Paid ({{ cur }})</label><input name="paid_amount" type="number" step="any" min="0" style="width:110px" value="{{ '%g'|format(cp.paid_amount) if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
         <div class="grow"><label>Note</label><input name="note" style="width:100%" value="{{ cp.note if cp else '' }}" placeholder="rounded off"></div>
         <button class="small">Save</button>
       </div>
