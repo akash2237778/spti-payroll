@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field with context %}
 {% block title %}Changes {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
 {% block body %}
 <h1>Changes to machine data {{ monthnav('changes_view', month, prev, nxt, eid=emp_id, kind=kind, by=by) }}
   {% if locked %}<span class="badge bad">payroll finalized - undo locked</span>{% endif %}</h1>

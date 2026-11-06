@@ -207,3 +207,58 @@ tr.punch-list-row > td { background: #fbfaff; padding: 8px 14px 12px; }
 
 /* lone punch on a paid weekly off / holiday */
 .st.mp-tag { min-width: 0; margin-left: 2px; padding: 1px 3px; font-size: 10px; }
+
+/* ===================================================================== printing on A4 */
+.print-head { display: none; }
+@page { size: A4 portrait; margin: 10mm 9mm 12mm; }
+@page wide { size: A4 landscape; margin: 8mm 8mm 10mm; }
+@media print {
+  html, body { background: #fff !important; font-size: 10px; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; box-shadow: none !important; }
+  body.print-landscape main { page: wide; }
+  header.top, .nav-toggle, .noprint, .flash, button, .btn, .dropdown, .toolbar, .punch-toggle, .mp-tag[title] + br { display: none !important; }
+  tr[hidden], details:not([open]) > :not(summary) { display: none !important; }
+  main { max-width: none; padding: 0; margin: 0; }
+  .print-head { display: flex; justify-content: space-between; gap: 6mm; font-size: 9px; color: #333;
+    border-bottom: 1px solid #999; padding-bottom: 1.5mm; margin-bottom: 3mm; }
+  h1 { font-size: 14px; margin: 0 0 2.5mm; gap: 4px; }
+  h2 { font-size: 11.5px; margin: 3mm 0 1.5mm; }
+  p, .muted, .small { font-size: 9px; }
+  a { color: inherit !important; text-decoration: none !important; }
+  .card { border: 1px solid #bbb; border-radius: 3px; padding: 2mm 3mm; margin-bottom: 3mm; break-inside: avoid; background: #fff; }
+  .row { gap: 3mm; }
+  .stats { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; gap: 2mm; margin-bottom: 3mm; }
+  .stat { padding: 1.5mm 2mm; border: 1px solid #bbb; border-radius: 3px; break-inside: avoid; }
+  .stat b { font-size: 12px; } .stat span { font-size: 8px; } .stat small { font-size: 7.5px; }
+  .scroll { max-height: none !important; overflow: visible !important; border: 0 !important; }
+  main table, .scroll > table { display: table !important; width: 100% !important; overflow: visible !important; font-size: 9px; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  th, td { padding: 1mm 1.4mm; border-bottom: 1px solid #ccc; }
+  th { position: static !important; background: #eef2f6 !important; font-size: 8.5px; }
+  tr:hover td { background: transparent; }
+  .st { min-width: 0; padding: 0 2px; font-size: 8px; }
+  .badge { font-size: 8px; padding: 0 4px; }
+  .legend { font-size: 8px; line-height: 1.6; }
+  input, select, textarea { border: 0 !important; background: none !important; padding: 0 !important; min-height: 0 !important;
+    font-size: inherit !important; -webkit-appearance: none; appearance: none; width: auto !important; }
+  input[type=checkbox] { -webkit-appearance: auto; appearance: auto; width: 10px !important; height: 10px; }
+  /* muster roll: 31 days + totals on one landscape row */
+  .muster td, .muster th { padding: 0.5mm 0.35mm !important; font-size: 7.5px !important; border-right: 1px solid #ddd; }
+  .muster td.name, .muster th.name { position: static !important; max-width: 34mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .muster .st { padding: 0 1px; font-size: 6.8px; border-radius: 2px; }
+  .muster sup { font-size: 5.5px; }
+  /* employee month: keep the day table compact */
+  tr.multi-entry > td { background: #f7f4fd !important; }
+  tr.punch-list-row > td { padding: 1mm 3mm; }
+  .final-totals table, #salary table { font-size: 9px; }
+}
+
+@media print {
+  h1 .nav-month, h1 form, h1 input, h1 select { display: none !important; }
+  .stats { grid-template-columns: repeat(auto-fit, minmax(26mm, 1fr)) !important; }
+  .stat { padding: 1mm 1.8mm; } .stat b { font-size: 11px; }
+  th, td { padding: 0.7mm 1.3mm; line-height: 1.25; }
+  td .badge { line-height: 1.2; }
+  th:empty, td.noprint + td:empty { display: none; }
+}

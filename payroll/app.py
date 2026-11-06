@@ -90,7 +90,8 @@ def inject():
     return {"user": g.get("user"), "settings": g.get("settings", {}), "csrf": session.get("csrf"),
             "cur": g.get("settings", {}).get("currency", "₹"),
             "can_pay": can_pay(), "can_edit": can_edit(), "is_admin": is_admin(), "ROLES": ROLES,
-            "emp_sort": emp_sort() if g.get("user") else "id", "url_with": url_with}
+            "emp_sort": emp_sort() if g.get("user") else "id", "url_with": url_with,
+            "printed_at": dt.datetime.now().strftime("%d %b %Y %H:%M")}
 
 
 # ------------------------------------------------------------------ employee sort order (ID or name)

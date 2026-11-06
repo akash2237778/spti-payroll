@@ -3,7 +3,7 @@
 <meta name="theme-color" content="#1f4e79">
 <title>{% block title %}Payroll{% endblock %} · {{ settings.company_name }} Payroll</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
-<body>
+<body class="{% block page_class %}{% endblock %}">
 {% if user %}
 {% set ep = request.endpoint or '' %}
 {% set more_on = ep in ('shifts','holidays','devices','settings_view','audit_view') %}
@@ -38,6 +38,7 @@
 </header>
 {% endif %}
 <main>
+  <div class="print-head"><b>{{ settings.company_name }}</b><span>{{ self.title() }}</span><span>printed {{ printed_at }}</span></div>
   {% for cat, msg in get_flashed_messages(with_categories=true) %}<div class="flash {{ cat }}">{{ msg }}</div>{% endfor %}
   {% block body %}{% endblock %}
 </main>

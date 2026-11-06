@@ -21,7 +21,7 @@
   <div class="stat"><span>Off / Leave</span><b>{{ stats.off }}</b></div>
   <div class="stat warn"><span>Missing punch</span><b>{{ stats.missing }}</b></div>
 </div>
-<div class="card">
+<div class="card noprint">
   <div class="row">
     <div class="grow">
     {% for d in devices %}
@@ -37,7 +37,7 @@
   </div>
 </div>
 <div class="scroll"><table>
-  <tr><th>ID</th><th>Name</th><th>Dept</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th>Punches</th><th></th></tr>
+<thead>  <tr><th>ID</th><th>Name</th><th>Dept</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th>Punches</th><th></th></tr></thead>
   {% for e, r in rows %}
   {% set gk = groups[loop.index0] %}
   {% if today_order == 'status' and (loop.first or gk != groups[loop.index0 - 1]) %}
@@ -52,7 +52,7 @@
     <td class="n">{{ r.late_min ~ 'm' if r.late_min else '' }}</td><td class="n">{{ r.early_min ~ 'm' if r.early_min else '' }}</td>
     <td class="n">{{ fmt_min(r.ot_min) if r.ot_min else '' }}</td>
     <td class="small muted">{% for p in r.punches %}{{ p.strftime('%H:%M') }}{{ ', ' if not loop.last }}{% endfor %}</td>
-    <td><a class="small" href="{{ url_for('att_day', eid=e.id, date=day.isoformat(), back=request.full_path) }}">edit</a></td>
+    <td class="noprint"><a class="small" href="{{ url_for('att_day', eid=e.id, date=day.isoformat(), back=request.full_path) }}">edit</a></td>
   </tr>
   {% endfor %}
 </table></div>

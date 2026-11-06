@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, day_st with context %}
 {% block title %}{{ emp.name }} {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
 {% block body %}
 {% set s = row.summary %}{% set p = row.pay %}
 <h1>{{ emp.name }} {% if emp.category == 'staff' %}<span class="badge">Staff</span>{% endif %} <span class="muted small">#{{ emp.device_user_id }} · {{ row.shift.name }} {{ row.shift.start_time }}-{{ row.shift.end_time }}</span>
@@ -41,7 +42,7 @@
 </div>
 {% endif %}
 <div class="scroll" style="margin-top:8px"><table>
-  <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th class="n" title="Left early but given a full day: minutes taken off overtime">Short (OT −)</th><th class="n" title="Payable days this day contributes: worked + extra + paid weekly off / holiday / leave">Day credit</th><th>All punches</th><th>Notes</th><th></th></tr>
+<thead>  <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th class="n" title="Left early but given a full day: minutes taken off overtime">Short (OT −)</th><th class="n" title="Payable days this day contributes: worked + extra + paid weekly off / holiday / leave">Day credit</th><th>All punches</th><th>Notes</th><th></th></tr></thead>
   {% for d in row.days %}
   {% set n_punch = d.punches|length %}
   <tr id="d{{ d.date.day }}" class="{{ 'multi-entry' if n_punch > 2 }}">
@@ -197,7 +198,7 @@
     <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
     <tr><td>Paid in cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
   </table>
-  <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
+  <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
     <input type="hidden" name="back" value="{{ request.full_path }}#salary">
     <b>Edit salary</b>
     <div class="form-grid" style="margin-top:8px">
@@ -224,7 +225,7 @@
   </form>
   </div>
   <div class="row" style="align-items:flex-start;margin-top:10px">
-    <form method="post" action="{{ url_for('pay_split', eid=emp.id) }}" class="card grow" style="background:#f8fafc">{{ csrf_field() }}
+    <form method="post" action="{{ url_for('pay_split', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
       <b>Bank / cash for {{ month }}</b>
       <p class="small muted" style="margin:4px 0">Net {{ cur }}{{ p.net|money }} → bank {{ cur }}{{ p.get('bank', p.net)|money }}, cash {{ cur }}{{ p.get('cash', 0)|money }}
@@ -239,7 +240,7 @@
       {% endif %}
     </form>
     {% set cp = row.get('cash_paid') %}
-    <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="card grow" style="background:#f8fafc">{{ csrf_field() }}
+    <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
       <b>Cash actually paid for {{ month }}</b>
       <table style="margin-top:4px">

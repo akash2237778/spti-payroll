@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% from "_macros.html" import st, monthnav, legend, csrf_field, sort_toggle, day_st with context %}
 {% block title %}Muster roll {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
 {% block body %}
 <h1>Monthly muster roll {{ monthnav('att_monthly', month, prev, nxt) }} {{ sort_toggle() }}
   <a class="btn light small noprint" href="{{ url_for('export_muster', month=month) }}">Export Excel</a>
@@ -17,9 +18,9 @@
 {% endif %}
 {{ legend() }}
 <div class="scroll" style="margin-top:8px"><table class="muster">
-  <tr><th class="name">Employee</th>
+<thead>  <tr><th class="name">Employee</th>
     {% for d in dates %}<th class="{{ 'sun' if d.weekday()==6 or d.isoformat() in hol }}" title="{{ hol[d.isoformat()].name if d.isoformat() in hol else '' }}">{{ d.day }}<br><span class="muted">{{ d.strftime('%a')[:2] }}</span></th>{% endfor %}
-    <th>P</th><th>HD</th><th>A</th><th>WO</th><th>WOP</th><th>MP</th><th>Late</th><th>Payable</th><th>Hours</th><th>OT</th></tr>
+    <th>P</th><th>HD</th><th>A</th><th>WO</th><th>WOP</th><th>MP</th><th>Late</th><th>Payable</th><th>Hours</th><th>OT</th></tr></thead>
   {% for r in rows %}{% set s = r.summary %}
   <tr>
     <td class="name"><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.device_user_id }} · {{ r.emp.name }}</a></td>

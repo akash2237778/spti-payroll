@@ -1,5 +1,6 @@
 {% extends "base.html" %}{% from "_macros.html" import monthnav, csrf_field, sort_toggle with context %}
 {% block title %}Payroll {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
 {% block body %}
 <h1>Payroll register {{ monthnav('payroll_view', month, prev, nxt) }} {{ sort_toggle() }}
   {% if run and run.status == 'final' %}<span class="badge bad">FINALIZED {{ run.finalized_at }} by {{ run.finalized_by }}</span>
@@ -44,9 +45,9 @@
   <div class="stat warn"><span>In cash</span><b>{{ cur }}{{ totals.cash|money }}</b></div>
 </div>
 <div class="scroll"><table>
-  <tr><th>ID</th><th>Name</th><th>Type</th><th class="n">Rate</th><th class="n">P</th><th class="n">HD</th><th class="n">A</th><th class="n">WO</th><th class="n">WOP</th><th class="n">Leave</th><th class="n">MP</th>
+<thead>  <tr><th>ID</th><th>Name</th><th>Type</th><th class="n">Rate</th><th class="n">P</th><th class="n">HD</th><th class="n">A</th><th class="n">WO</th><th class="n">WOP</th><th class="n">Leave</th><th class="n">MP</th>
     <th class="n">Payable</th><th class="n">Hours</th><th class="n">OT h</th><th class="n">Basic</th><th class="n">OT pay</th><th class="n">Allow.</th><th class="n">Gross</th>
-    <th class="n">PF</th><th class="n">ESI</th><th class="n">Adv/TDS/Oth</th><th class="n">Net</th><th class="n">Bank</th><th class="n">Cash</th><th></th></tr>
+    <th class="n">PF</th><th class="n">ESI</th><th class="n">Adv/TDS/Oth</th><th class="n">Net</th><th class="n">Bank</th><th class="n">Cash</th><th></th></tr></thead>
   {% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}
   <tr>
     <td>{{ r.emp.device_user_id }}</td><td><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.name }}</a></td>
@@ -60,7 +61,7 @@
     <td class="n"><b>{{ p.net|money }}</b></td>
     <td class="n {{ 'edited' if p.get('bank_override') }}" title="{{ p.get('pay_how', '') }}">{{ p.get('bank', p.net)|money }}</td>
     <td class="n {{ 'edited' if r.get('cash_diff') }}" title="{{ ('paid ' ~ (r.cash_paid.paid_amount|money) ~ ', difference ' ~ ('%+.2f'|format(r.cash_diff))) if r.get('cash_paid') else '' }}">{{ p.get('cash', 0)|money if p.get('cash') else '' }}{% if r.get('cash_paid') %} <span class="small">✓</span>{% endif %}</td>
-    <td><a class="small" href="{{ url_for('payslip', eid=r.emp.id, month=month) }}" target="_blank">slip</a></td>
+    <td class="noprint"><a class="small" href="{{ url_for('payslip', eid=r.emp.id, month=month) }}" target="_blank">slip</a></td>
   </tr>{% endfor %}
   <tr><th colspan="14">Total</th><th class="n">{{ totals.basic|money }}</th><th class="n">{{ totals.ot_pay|money }}</th><th class="n">{{ (totals.allowance + totals.bonus)|money }}</th>
     <th class="n">{{ totals.gross|money }}</th><th class="n">{{ totals.pf|money }}</th><th class="n">{{ totals.esi|money }}</th>

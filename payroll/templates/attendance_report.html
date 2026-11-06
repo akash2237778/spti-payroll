@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}Attendance statements {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
 {% block body %}
 <div class="toolbar noprint">
   <button onclick="window.print()">Print</button>
@@ -12,7 +13,21 @@
   .stmt .meta td { border:0; padding:1px 8px 1px 0; }
   .stmt .calc td:first-child { font-weight:600; white-space:nowrap; } .stmt .calc td:last-child { text-align:right; font-weight:600; white-space:nowrap; }
   .stmt tr.off td { color:#666; background:#f6f6f6; }
-  @media print { .stmt { border:0; padding:0; margin:0; max-width:none; } @page { size: A4 landscape; margin: 10mm; } }
+  @media print {
+    .stmt { border:0; padding:0; margin:0; max-width:none; break-after: page; }
+    @page { size: A4 landscape; margin: 7mm 8mm; }
+    .print-head { display: none !important; }              /* the statement has its own header */
+    .stmt table { font-size: 8.4px !important; }
+    .stmt th, .stmt td { padding: 0.2mm 1.2mm !important; line-height: 1.15; }
+    .stmt table.calc { font-size: 8px !important; }
+    .stmt .row { flex-wrap: nowrap; gap: 3mm; margin-top: 1.5mm !important; }
+    .stmt .row > table { width: auto !important; }
+    .stmt .row > table.grow { flex: 1; }
+    .stmt h3 { font-size: 12px; } .stmt .meta td { padding: 0 6px 0 0 !important; }
+    .stmt > div:last-child { margin-top: 3.5mm !important; break-before: avoid; }
+    .stmt:last-of-type { break-after: auto; }
+    @page { margin: 6mm 8mm; }
+  }
 </style>
 {% for r in rows %}{% set s = r.summary %}{% set p = r.pay %}{% set e = r.emp %}
 <div class="stmt">
@@ -25,8 +40,8 @@
     <td>Shift: {{ r.shift.name }} {{ r.shift.start_time }}–{{ r.shift.end_time }}</td>
     {% if can_pay %}<td>Salary: {{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</td>{% endif %}</tr></table>
   <table>
-    <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early</th>
-      <th class="n">OT</th><th class="n">Late pen.</th><th class="n" title="Left early but given a full day: minutes taken off OT">Short</th><th class="n">Day credit</th><th>Notes</th></tr>
+<thead>    <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early</th>
+      <th class="n">OT</th><th class="n">Late pen.</th><th class="n" title="Left early but given a full day: minutes taken off OT">Short</th><th class="n">Day credit</th><th>Notes</th></tr></thead>
     {% for d in r.days %}
     <tr class="{{ 'off' if d.status in ('WO','H','-') }}">
       <td>{{ d.date.strftime('%d') }}</td><td>{{ d.date.strftime('%a') }}</td><td>{{ d.shift.name if d.shift else '' }}</td><td><b>{{ d.status }}</b>{{ ' +MP' if d.get('mp_on_off') }}</td>
