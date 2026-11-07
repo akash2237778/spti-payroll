@@ -203,9 +203,16 @@ def worked_minutes(times, shift, mode, paid_break=False):
     return session_minutes({"punches": list(times), "orphan": len(times) < 2}, shift, mode, paid_break)
 
 
+def paid_day_minutes(shift):
+    """Standard paid working minutes of a day on this shift: the shift's 'standard paid hours' when set
+    (e.g. 8 h on a 21:00-09:00 night duty; the rest is overtime), else shift length minus lunch."""
+    v = shift["std_min"] if "std_min" in shift.keys() else None
+    return int(v) if v else standard_minutes(shift)
+
+
 def ot_base_minutes(shift, paid_break=False):
     """Paid minutes in a normal day before overtime starts (lunch included when it is paid)."""
-    return standard_minutes(shift) + (int(shift.get("break_min") or 0) if paid_break else 0)
+    return paid_day_minutes(shift) + (int(shift.get("break_min") or 0) if paid_break else 0)
 
 
 def _override_session(work_date, ov):
@@ -737,7 +744,7 @@ def summarize(days, shift, settings, salary_type="monthly", before=(), after=())
     s["late_deduction_days"] = (int(s["late_count"]) // per) * 0.5 if per > 0 else 0.0
     s["paid_off_days"] = (s["wo_credit"] if wo_paid else 0.0) + s["holiday_credit"] + s["leave_credit"]
     s["payable_days"] = max(0.0, s["work_credit"] + s["extra_credit"] + s["paid_off_days"] - s["late_deduction_days"])
-    s["std_min"] = standard_minutes(shift)   # paid working hours of the shift (rate basis), lunch excluded
+    s["std_min"] = paid_day_minutes(shift)   # paid working hours of the shift (rate basis), lunch excluded
     s["days_in_period"] = len(days)
     return dict(s)
 

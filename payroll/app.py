@@ -28,7 +28,7 @@ def _secret_key():
 
 
 app.config["SECRET_KEY"] = os.environ.get("PAYROLL_SECRET") or _secret_key()
-app.jinja_env.globals.update(fmt_min=engine.fmt_min, PAY_MODES=payroll.PAY_MODES, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
+app.jinja_env.globals.update(fmt_min=engine.fmt_min, PAY_MODES=payroll.PAY_MODES, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.paid_day_minutes, std_shift_len=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
                              OVERRIDE_STATUSES=engine.OVERRIDE_STATUSES, WEEKDAYS=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
 
 
@@ -756,8 +756,9 @@ def shifts():
         ints = ["break_min", "break_after_min", "grace_in_min", "grace_out_min", "ot_after_min", "ot_round_min", "ot_grace_min",
                 "day_start_hour"]
         vals = [f["name"], f["start_time"], f["end_time"]] + [int(f.get(k) or 0) for k in ints] + \
-               [int(float(f.get("full_day_hrs") or 8) * 60), int(float(f.get("half_day_hrs") or 4) * 60)]
-        cols = ["name", "start_time", "end_time"] + ints + ["full_day_min", "half_day_min", "break_start"]
+               [int(float(f.get("full_day_hrs") or 8) * 60), int(float(f.get("half_day_hrs") or 4) * 60),
+                int(float(f["std_hrs"]) * 60) if (f.get("std_hrs") or "").strip() else None]
+        cols = ["name", "start_time", "end_time"] + ints + ["full_day_min", "half_day_min", "std_min", "break_start"]
         vals.append(f.get("break_start") or None)
         if f.get("id"):
             g.conn.execute(f"UPDATE shifts SET {', '.join(c + '=?' for c in cols)} WHERE id=?", vals + [int(f["id"])])
@@ -846,7 +847,9 @@ def att_employee(eid):
         attach_cash_paid([row], month)
     return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
-                           history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall())
+                           history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
+                           adjs=g.conn.execute("""SELECT * FROM adjustments WHERE employee_id=? AND month=? AND kind != 'advance'
+                                                  ORDER BY id""", (eid, month)).fetchall() if can_pay() else [])
 
 
 TS_FMT = "%Y-%m-%d %H:%M:%S"
@@ -1288,6 +1291,9 @@ def leaves():
     return render_template("leaves.html", rows=rows, emps=emps, month=month, prev=prev, nxt=nxt, balance=balance, year=year)
 
 
+ADJ_LABELS = {"deduction": "Deduction", "tds": "TDS", "allowance": "Allowance", "bonus": "Bonus"}
+
+
 @app.route("/adjustments", methods=["GET", "POST"])
 @pay_required
 def adjustments():
@@ -1296,15 +1302,27 @@ def adjustments():
         require_pay()
         ensure_unlocked(month)
         f = request.form
+        back = f.get("back", "")
+        back = back if back.startswith("/") and not back.startswith("//") else url_for("adjustments", month=month)
         if f.get("delete"):
-            g.conn.execute("DELETE FROM adjustments WHERE id = ?", (int(f["delete"]),))
+            g.conn.execute("DELETE FROM adjustments WHERE id = ? AND kind != 'advance'", (int(f["delete"]),))
+            flash("Entry removed", "ok")
         else:
             if f["kind"] not in ("allowance", "bonus", "deduction", "tds"):
                 abort(400, "Advance recoveries are set in the Advances section")
+            try:
+                amount = round(float(re.sub(r"[₹,\s]|/-$|^rs\.?", "", (f.get("amount") or "").lower())), 2)
+            except ValueError:
+                flash(f"Not saved: '{f.get('amount')}' is not an amount", "error")
+                return redirect(back)
+            if amount <= 0:
+                flash("Not saved: the amount must be more than 0", "error")
+                return redirect(back)
             g.conn.execute("INSERT INTO adjustments(employee_id, month, kind, amount, note) VALUES (?,?,?,?,?)",
-                           (int(f["employee_id"]), month, f["kind"], float(f["amount"]), f.get("note", "")))
-        audit("adjustment_save", dict(f))
-        return redirect(url_for("adjustments", month=month))
+                           (int(f["employee_id"]), month, f["kind"], amount, f.get("note", "").strip()))
+            flash(f"{ADJ_LABELS.get(f['kind'], f['kind'])} of {amount:g} saved", "ok")
+        audit("adjustment_save", {k: v for k, v in f.items() if k not in ("csrf", "back")})
+        return redirect(back)
     rows = g.conn.execute("""SELECT a.*, e.name, e.device_user_id FROM adjustments a JOIN employees e ON e.id=a.employee_id
                              WHERE a.month = ? ORDER BY e.name""", (month,)).fetchall()
     emps = g.conn.execute("SELECT id, name, device_user_id FROM employees WHERE active=1 ORDER BY name").fetchall()

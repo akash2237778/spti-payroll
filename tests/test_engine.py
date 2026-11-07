@@ -695,3 +695,13 @@ def test_shift_list_shows_where_each_change_applies():
     assert r[2]["in_effect"] == [] and {n["id"] for n in r[2]["replaced_by"]} == {3, 4}
     assert r[3]["in_effect"] == [("2026-11-01", None)]
     assert r[4]["in_effect"] == [("2026-10-01", "2026-10-31")] and r[4]["replaced_by"] == []
+
+
+def test_night_duty_standard_8h_rest_is_ot():
+    night = dict(SHIFT, name="Night", start_time="21:00", end_time="09:00", break_start=None, full_day_min=360,
+                 day_start_hour=12, std_min=480)
+    r = engine.evaluate_day(D, [t(21, 3), t(9, 4, D + dt.timedelta(days=1))], night, S, today=TODAY)
+    assert r["status"] == "P" and r["worked_min"] == 691 and r["ot_min"] == 210 and not r.get("early_short_min")
+    # without the setting the standard day is the whole 11h30 shift: no OT
+    plain = dict(night, std_min=None)
+    assert engine.evaluate_day(D, [t(21, 3), t(9, 4, D + dt.timedelta(days=1))], plain, S, today=TODAY)["ot_min"] == 0

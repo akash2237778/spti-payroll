@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS shifts (
     half_day_min INTEGER DEFAULT 240,     -- worked minutes needed for a half day
     ot_after_min INTEGER DEFAULT 30,      -- minimum extra minutes before OT counts
     ot_round_min INTEGER DEFAULT 30,      -- OT rounded down to this block
-    ot_grace_min INTEGER DEFAULT 5,       -- a block still counts when at most this many minutes short
+    ot_grace_min INTEGER DEFAULT 5,
+    std_min INTEGER,                      -- standard paid minutes a day (NULL = shift length - lunch); beyond = OT       -- a block still counts when at most this many minutes short
     day_start_hour INTEGER DEFAULT 5);    -- punches before this hour belong to the previous work day
 
 CREATE TABLE IF NOT EXISTS employees (
@@ -204,7 +205,7 @@ def init_db():
                                 ("employees", "comp_hra", "REAL DEFAULT 0"), ("employees", "comp_conveyance", "REAL DEFAULT 0"),
                                 ("employees", "comp_other", "REAL DEFAULT 0"),
                                 ("employees", "multi_punch", "INTEGER DEFAULT 0"),
-                                ("shifts", "ot_grace_min", "INTEGER DEFAULT 5")):
+                                ("shifts", "ot_grace_min", "INTEGER DEFAULT 5"), ("shifts", "std_min", "INTEGER")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice
@@ -217,6 +218,12 @@ def init_db():
             c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, break_start, grace_in_min,
                          grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
                          VALUES ('General', '09:00', '17:30', 30, 300, '13:00', 15, 15, 360, 240, 30, 30, 5)""")
+        if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_night_8h'").fetchone():
+            # Owner rule: an 8-hour working day, the rest is overtime - also on the 21:00-09:00 night duty
+            # (it was paid as an 11h30 standard day, so nights gave no overtime). Only an untouched Night shift moves.
+            c.execute("""UPDATE shifts SET std_min = 480 WHERE name = 'Night' AND start_time = '21:00' AND end_time = '09:00'
+                         AND std_min IS NULL""")
+            c.execute("INSERT INTO settings(key, value) VALUES ('migrated_night_8h', '1')")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_late_penalty_30'").fetchone():
             # Owner, 2026-11-06: default late penalty is a flat 30 OT minutes. Only untouched old defaults (0 + 1x) move.
             if (c.execute("SELECT value FROM settings WHERE key='late_penalty_per_mark_min'").fetchone()[0] in ("0", "0.0")
@@ -245,8 +252,8 @@ def init_db():
                 # Night duty seen on the real data: in ~21:00, out ~09:00 next morning.
                 # Day starts at 12:00 so an unpaired morning punch counts for the previous night.
                 c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, grace_in_min,
-                             grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
-                             VALUES ('Night', '21:00', '09:00', 30, 300, 15, 15, 480, 240, 30, 30, 12)""")
+                             grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour, std_min)
+                             VALUES ('Night', '21:00', '09:00', 30, 300, 15, 15, 480, 240, 30, 30, 12, 480)""")
             c.execute("INSERT INTO settings(key, value) VALUES ('seeded_night_shift', '1')")
         if not c.execute("SELECT 1 FROM devices").fetchone():
             c.execute("INSERT INTO devices(name, ip, port) VALUES ('Main Gate', '192.168.2.56', 4370)")

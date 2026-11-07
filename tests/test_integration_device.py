@@ -13,7 +13,7 @@ import socket
 
 import pytest
 
-from payroll import db, engine
+from payroll import db, engine, payroll
 
 DEVICE_IP = os.environ.get("DEVICE_IP", "192.168.2.56")
 
@@ -598,6 +598,21 @@ def test_end_to_end(client):
     assert "Type the cash amount actually paid" in r.get_data(as_text=True)
     post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1234.75")
     post(c, "/payroll?month=2026-09", action="reopen")
+    # manual deductions / additions from the employee attendance page
+    def net(eid, m):
+        with db.tx() as conn:
+            return payroll.compute_month(conn, m, employee_ids={eid})[0]["pay"]["net"]
+    n0 = net(sep_emp, "2026-09")
+    page = post(c, "/adjustments?month=2026-09", employee_id=str(sep_emp), kind="deduction", amount="₹1,250.50", note="canteen",
+                back=f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert "Deduction of 1250.5 saved" in page and 'id="other-deductions"' in page and "canteen" in page
+    assert abs(net(sep_emp, "2026-09") - (n0 - 1250.5)) < 1.01
+    with db.tx() as conn:
+        aid = conn.execute("SELECT id FROM adjustments WHERE employee_id=? AND note='canteen'", (sep_emp,)).fetchone()[0]
+    assert "must be more than 0" in post(c, "/adjustments?month=2026-09", employee_id=str(sep_emp), kind="deduction", amount="0",
+                                         back=f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    post(c, "/adjustments?month=2026-09", delete=str(aid), back=f"/attendance/employee/{sep_emp}?month=2026-09")
+    assert abs(net(sep_emp, "2026-09") - n0) < 0.01
     # final totals save without a reason (no silent rejection); fractional payable days accepted
     r = post(c, f"/attendance/employee/{sep_emp}/totals", month="2026-09", payable_days="20.25", ot_hours="", reason="")
     assert "Final totals for" in r.get_data(as_text=True)

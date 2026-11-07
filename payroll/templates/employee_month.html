@@ -297,6 +297,33 @@
       {% endif %}
       <p class="small" style="margin:6px 0 0"><a href="{{ url_for('adjustments', month=month) }}">All advances / history</a></p>
     </div>
+    <div class="card grow" style="background:#f8fafc" id="other-deductions">
+      <b>Other deductions / additions</b>
+      {% set lbl = {'deduction': 'Deduction', 'tds': 'TDS', 'allowance': 'Allowance', 'bonus': 'Bonus'} %}
+      {% if adjs %}
+      <table style="margin-top:4px">
+        {% for a in adjs %}
+        <tr class="edited"><td>{{ lbl.get(a.kind, a.kind) }}{% if a.note %} <span class="small muted">· {{ a.note }}</span>{% endif %}</td>
+          <td class="n" style="color:{{ 'var(--bad)' if a.kind in ('deduction', 'tds') else 'var(--ok)' }}">{{ '−' if a.kind in ('deduction', 'tds') else '+' }}{{ cur }}{{ a.amount|money }}</td>
+          <td>{% if not locked %}<form method="post" action="{{ url_for('adjustments', month=month) }}" class="inline" onsubmit="return confirm('Remove this entry?')">{{ csrf_field() }}
+            <input type="hidden" name="delete" value="{{ a.id }}"><input type="hidden" name="back" value="{{ request.full_path }}#other-deductions">
+            <button class="light small" title="Remove">✕</button></form>{% endif %}</td></tr>
+        {% endfor %}
+      </table>
+      {% else %}<p class="small muted" style="margin:4px 0">None this month.</p>{% endif %}
+      {% if not locked %}
+      <form method="post" action="{{ url_for('adjustments', month=month) }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+        <input type="hidden" name="employee_id" value="{{ emp.id }}"><input type="hidden" name="back" value="{{ request.full_path }}#other-deductions">
+        <div><label>Type</label><select name="kind">
+          <option value="deduction" selected>Deduction (−)</option><option value="tds">TDS (−)</option>
+          <option value="allowance">Allowance (+)</option><option value="bonus">Bonus (+)</option></select></div>
+        <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" required style="width:100px"></div>
+        <div class="grow"><label>Note</label><input name="note" style="width:100%" placeholder="e.g. canteen, damage, uniform"></div>
+        <button class="small">Add</button>
+      </form>
+      {% endif %}
+      <p class="small muted" style="margin:6px 0 0">Several entries per month are fine; they show on the salary, payslip and Excel.</p>
+    </div>
   </div>
   {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
 </div>
