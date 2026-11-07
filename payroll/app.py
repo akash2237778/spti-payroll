@@ -794,6 +794,8 @@ def shifts():
                [int(float(f.get("full_day_hrs") or 8) * 60), int(float(f.get("half_day_hrs") or 4) * 60),
                 int(float(f["std_hrs"]) * 60) if (f.get("std_hrs") or "").strip() else None]
         cols = ["name", "start_time", "end_time"] + ints + ["full_day_min", "half_day_min", "std_min", "break_start"]
+        if not db.has_column(g.conn, "shifts", "std_min"):   # not switched on in this database: leave the schema alone
+            i = cols.index("std_min"); del cols[i]; del vals[i]
         vals.append(f.get("break_start") or None)
         if f.get("id"):
             g.conn.execute(f"UPDATE shifts SET {', '.join(c + '=?' for c in cols)} WHERE id=?", vals + [int(f["id"])])
@@ -803,7 +805,7 @@ def shifts():
         flash("Shift saved", "ok")
         return redirect(url_for("shifts"))
     rows = g.conn.execute("SELECT s.*, (SELECT COUNT(*) FROM employees e WHERE e.shift_id = s.id) AS n FROM shifts s").fetchall()
-    return render_template("shifts.html", rows=rows)
+    return render_template("shifts.html", rows=rows, has_std=db.has_column(g.conn, "shifts", "std_min"))
 
 
 NATIONAL_HOLIDAYS = [("01-26", "Republic Day"), ("08-15", "Independence Day"), ("10-02", "Gandhi Jayanti")]
