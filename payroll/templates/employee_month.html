@@ -13,7 +13,7 @@
       {% for o in others %}<option value="{{ o.id }}" {{ 'selected' if o.id == emp.id }}>{{ o.device_user_id }} · {{ o.name }}</option>{% endfor %}</select></form>
   {% if locked %}<span class="badge bad">payroll finalized - locked</span>{% endif %}
 </h1>
-{% set panel_from = month ~ '-01' %}{% set panel_open = false %}
+{% set panel_month = month %}{% set panel_from = none %}{% set panel_to = none %}{% set panel_open = false %}
 {% include "_shift_panel.html" %}
 <div class="stats">
   <div class="stat ok"><span>Present</span><b>{{ s.get('cnt_P',0)|days }}</b></div>

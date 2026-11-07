@@ -48,7 +48,7 @@
 </div></div>{% endif %}
 {% if can_edit %}<button>Save employee</button>{% endif %} <a class="btn light" href="{{ url_for('employees') }}">Cancel</a>
 </form>
-{% if emp %}{% set panel_from = '' %}{% set panel_open = history|length > 0 %}
+{% if emp %}{% set panel_month = month %}{% set panel_from = none %}{% set panel_to = none %}{% set panel_open = history|length > 0 %}
 <h2>Shift roster</h2>
 {% include "_shift_panel.html" %}{% endif %}
 {% endblock %}

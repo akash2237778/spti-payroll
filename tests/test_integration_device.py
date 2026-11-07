@@ -205,6 +205,17 @@ def test_end_to_end(client):
     assert r.status_code == 409  # roster in a finalized month is locked
     r = post(c, f"/payroll?month={month}", action="reopen")
     assert b"reopened" in r.data
+    # shift changes are kept month by month: an open or longer range stops at the end of the From month
+    r = post(c, f"/employees/{prem}/shifts", shift_id=str(night), from_date="2026-09-27", to_date="2026-10-15", reason="monthly")
+    assert b"kept month by month" in r.data
+    with db.tx() as conn:
+        row = conn.execute("SELECT id, from_date, to_date FROM employee_shifts WHERE employee_id=? AND reason='monthly'", (prem,)).fetchone()
+    assert (row["from_date"], row["to_date"]) == ("2026-09-27", "2026-09-30")
+    page = c.get(f"/attendance/employee/{prem}?month=2026-09").get_data(as_text=True)
+    assert 'name="to_date" value="2026-09-30" min="2026-09-01" max="2026-09-30"' in page and "September 2026" in page
+    oct_page = c.get(f"/attendance/employee/{prem}?month=2026-10").get_data(as_text=True)
+    assert "monthly" not in oct_page.split('id="shift-panel"')[1].split("</details>")[0]   # September's change not listed in October
+    post(c, f"/employees/{prem}/shifts", delete=str(row["id"]))
 
     # 8. sanity of numbers on the real data
     with db.tx() as conn:

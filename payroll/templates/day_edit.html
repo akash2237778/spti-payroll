@@ -16,7 +16,7 @@
     <a href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">change</a>{% if typical %} · this employee usually works
     {{ '%02d:%02d'|format(typical[0]|int, ((typical[0] % 1) * 60)|round|int) }}–{{ '%02d:%02d'|format(typical[1]|int, ((typical[1] % 1) * 60)|round|int) }}{% endif %}</div>
 </div>
-{% set panel_from = d.isoformat() %}{% set panel_to = d.isoformat() %}{% set panel_open = false %}
+{% set panel_month = d.strftime('%Y-%m') %}{% set panel_from = d.isoformat() %}{% set panel_to = d.isoformat() %}{% set panel_open = false %}
 {% include "_shift_panel.html" %}
 {% set ro = locked or not can_edit %}
 <div class="row" style="align-items:stretch">

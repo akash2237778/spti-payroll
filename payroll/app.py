@@ -28,7 +28,7 @@ def _secret_key():
 
 
 app.config["SECRET_KEY"] = os.environ.get("PAYROLL_SECRET") or _secret_key()
-app.jinja_env.globals.update(fmt_min=engine.fmt_min, PAY_MODES=payroll.PAY_MODES, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.paid_day_minutes, std_shift_len=engine.standard_minutes,STATUS_LABELS=engine.STATUS_LABELS,
+app.jinja_env.globals.update(fmt_min=engine.fmt_min, PAY_MODES=payroll.PAY_MODES, day_credit=reports.day_credit, shift_times=engine.shift_bounds, std_minutes=engine.paid_day_minutes, std_shift_len=engine.standard_minutes, month_range=engine.month_range,STATUS_LABELS=engine.STATUS_LABELS,
                              OVERRIDE_STATUSES=engine.OVERRIDE_STATUSES, WEEKDAYS=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])
 
 
@@ -480,14 +480,27 @@ def employee_edit(eid):
         flash("Employee saved", "ok")
         return redirect(url_for("employees"))
     shifts = g.conn.execute("SELECT * FROM shifts").fetchall()
-    return render_template("employee_edit.html", emp=emp, shifts=shifts, history=shift_history(eid) if eid else [])
+    month = request.args.get("month") or dt.date.today().strftime("%Y-%m")
+    return render_template("employee_edit.html", emp=emp, shifts=shifts, month=month,
+                           history=shift_history(eid, month) if eid else [])
 
 
-def shift_history(eid):
+def shift_history(eid, month=None):
+    """Shift changes of an employee; with a month, only those touching that month, effective dates clipped to it."""
     rows = [dict(r) for r in g.conn.execute("""SELECT a.*, s.name AS shift_name, s.start_time, s.end_time FROM employee_shifts a
                              JOIN shifts s ON s.id = a.shift_id WHERE a.employee_id = ? ORDER BY a.from_date DESC, a.id DESC""",
                           (eid,))]
-    return shift_effective(rows)
+    rows = shift_effective(rows)
+    if not month:
+        return rows
+    m0, m1 = (x.isoformat() for x in engine.month_range(month))
+    out = []
+    for r in rows:
+        if r["from_date"] > m1 or (r["to_date"] and r["to_date"] < m0):
+            continue
+        r["in_effect"] = [(max(a, m0), min(b or m1, m1)) for a, b in r["in_effect"] if a <= m1 and (b is None or b >= m0)]
+        out.append(r)
+    return out
 
 
 def shift_effective(rows):
@@ -541,15 +554,23 @@ def employee_shifts(eid):
         flash("Shift change removed; attendance recalculated", "ok")
     else:
         frm, to = f["from_date"], f.get("to_date") or None
+        try:
+            m_start, m_end = engine.month_range(frm[:7])
+        except ValueError:
+            abort(400)
         if to and to < frm:
             flash("'To' date must be on or after 'From' date", "error")
             return redirect(f.get("back") or url_for("att_employee", eid=eid))
+        # Shift changes are kept month by month: an open or longer range stops at the end of the From month.
+        clipped = not to or to > m_end.isoformat()
+        to = min(to, m_end.isoformat()) if to else m_end.isoformat()
         _ensure_range_unlocked(frm, to)
         shift = g.conn.execute("SELECT * FROM shifts WHERE id = ?", (int(f["shift_id"]),)).fetchone() or abort(400)
         g.conn.execute("INSERT INTO employee_shifts(employee_id, shift_id, from_date, to_date, reason, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
                        (eid, shift["id"], frm, to, f.get("reason", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
         audit("shift_assign", {"emp": eid, "name": emp["name"], "shift": shift["name"], "from": frm, "to": to, "reason": f.get("reason")})
-        flash(f"{emp['name']}: {shift['name']} shift from {frm}{' to ' + to if to else ' onwards'}. Punches re-paired.", "ok")
+        flash(f"{emp['name']}: {shift['name']} shift {frm} to {to}. Punches re-paired."
+              + (" (Shift changes are kept month by month - set next month on its own page.)" if clipped else ""), "ok")
     return redirect(f.get("back") or url_for("att_employee", eid=eid))
 
 
@@ -847,7 +868,7 @@ def att_employee(eid):
         attach_cash_paid([row], month)
     return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
-                           history=shift_history(eid), shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
+                           history=shift_history(eid, month), shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
                            adjs=g.conn.execute("""SELECT * FROM adjustments WHERE employee_id=? AND month=? AND kind != 'advance'
                                                   ORDER BY id""", (eid, month)).fetchall() if can_pay() else [])
 
@@ -1111,7 +1132,7 @@ def att_day(eid, date):
     if sug and sug["role"] == "in":
         default_in, default_out = sug["ts"], sug["of"]
     return render_template("day_edit.html", emp=emp, d=d, rec=rec, raw=raw, mine=mine, ov=ov, lv=lv, shift=day_shift, gates=gates,
-                           shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
+                           shifts=g.conn.execute("SELECT * FROM shifts").fetchall(), history=shift_history(eid, date[:7]),
                            default_in=default_in, default_out=default_out, typical=data["typical"],
                            locked=payroll.is_locked(g.conn, date), back=request.args.get("back", ""))
 

@@ -1,14 +1,15 @@
-{# Shift roster panel. Needs: emp, shifts, history, panel_from, panel_to (optional), panel_open (bool) #}
+{# Shift roster panel. Needs: emp, shifts, history, panel_month (YYYY-MM), panel_from / panel_to (optional), panel_open #}
+{% set pm0, pm1 = month_range(panel_month) %}
 {% from "_macros.html" import csrf_field with context %}
 <details class="card noprint" {{ 'open' if panel_open }} id="shift-panel">
   <summary style="cursor:pointer"><b>⇄ Change shift</b>
-    <span class="small muted">rotate between day / night etc. Several changes per month are fine; the newest entry wins where dates overlap.</span></summary>
+    <span class="small muted">{{ pm0.strftime('%B %Y') }} · several changes per month are fine; the newest entry wins where dates overlap.</span></summary>
   {% if can_edit %}
   <form method="post" action="{{ url_for('employee_shifts', eid=emp.id) }}" class="row" style="margin-top:10px">{{ csrf_field() }}
     <input type="hidden" name="back" value="{{ request.full_path }}">
     <div><label>Shift</label><select name="shift_id">{% for s in shifts %}<option value="{{ s.id }}" {{ 'selected' if s.name == 'Night' }}>{{ s.name }} ({{ s.start_time }}–{{ s.end_time }})</option>{% endfor %}</select></div>
-    <div><label>From</label><input type="date" name="from_date" value="{{ panel_from }}" required></div>
-    <div><label>To (blank = until changed)</label><input type="date" name="to_date" value="{{ panel_to or '' }}"></div>
+    <div><label>From</label><input type="date" name="from_date" value="{{ panel_from or pm0.isoformat() }}" min="{{ pm0.isoformat() }}" max="{{ pm1.isoformat() }}" required></div>
+    <div><label>To</label><input type="date" name="to_date" value="{{ panel_to or pm1.isoformat() }}" min="{{ pm0.isoformat() }}" max="{{ pm1.isoformat() }}" required></div>
     <div class="grow"><label>Reason</label><input name="reason" style="width:100%" placeholder="night duty rotation"></div>
     <button>Apply shift</button>
   </form>
@@ -24,6 +25,6 @@
       <td class="small">{{ h.reason }}</td><td class="small muted">{{ h.created_by }} {{ h.created_at[:16] }}</td>
       <td>{% if can_edit %}<form method="post" action="{{ url_for('employee_shifts', eid=emp.id) }}" class="inline" onsubmit="return confirm('Remove this shift change?')">{{ csrf_field() }}
         <input type="hidden" name="back" value="{{ request.full_path }}"><input type="hidden" name="delete" value="{{ h.id }}"><button class="danger small">Remove</button></form>{% endif %}</td></tr>
-    {% else %}<tr><td colspan="7" class="muted">No shift changes. Default shift from the employee profile applies every day.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="7" class="muted">No shift changes in {{ pm0.strftime('%B %Y') }}. The default shift from the employee profile applies every day.</td></tr>{% endfor %}
   </table>
 </details>
