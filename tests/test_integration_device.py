@@ -215,6 +215,15 @@ def test_end_to_end(client):
     assert 'name="to_date" value="2026-09-30" min="2026-09-01" max="2026-09-30"' in page and "September 2026" in page
     oct_page = c.get(f"/attendance/employee/{prem}?month=2026-10").get_data(as_text=True)
     assert "monthly" not in oct_page.split('id="shift-panel"')[1].split("</details>")[0]   # September's change not listed in October
+    # edit the entry in place: same id (keeps its "newest wins" place), new shift / dates / reason
+    r = post(c, f"/employees/{prem}/shifts", update=str(row["id"]), shift_id="1", from_date="2026-09-28", to_date="2026-10-05",
+             reason="edited")
+    assert b"shift entry changed" in r.data and b"cut to the end of the From month" in r.data
+    with db.tx() as conn:
+        ed = conn.execute("SELECT * FROM employee_shifts WHERE id=?", (row["id"],)).fetchone()
+    assert (ed["shift_id"], ed["from_date"], ed["to_date"], ed["reason"]) == (1, "2026-09-28", "2026-09-30", "edited")
+    page = c.get(f"/attendance/employee/{prem}?month=2026-09").get_data(as_text=True)
+    assert f'id="se{row["id"]}"' in page and f'name="update" value="{row["id"]}"' in page
     post(c, f"/employees/{prem}/shifts", delete=str(row["id"]))
 
     # 8. sanity of numbers on the real data

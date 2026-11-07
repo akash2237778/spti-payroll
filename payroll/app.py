@@ -554,6 +554,10 @@ def employee_shifts(eid):
         flash("Shift change removed; attendance recalculated", "ok")
     else:
         frm, to = f["from_date"], f.get("to_date") or None
+        old = None
+        if f.get("update"):
+            old = g.conn.execute("SELECT * FROM employee_shifts WHERE id=? AND employee_id=?", (int(f["update"]), eid)).fetchone() or abort(404)
+            _ensure_range_unlocked(old["from_date"], old["to_date"])
         try:
             m_start, m_end = engine.month_range(frm[:7])
         except ValueError:
@@ -566,6 +570,16 @@ def employee_shifts(eid):
         to = min(to, m_end.isoformat()) if to else m_end.isoformat()
         _ensure_range_unlocked(frm, to)
         shift = g.conn.execute("SELECT * FROM shifts WHERE id = ?", (int(f["shift_id"]),)).fetchone() or abort(400)
+        if old:   # edit in place: keeps the entry's id, so its place in the "newest wins" order is unchanged
+            g.conn.execute("""UPDATE employee_shifts SET shift_id=?, from_date=?, to_date=?, reason=?, created_by=?, created_at=?
+                              WHERE id=?""", (shift["id"], frm, to, f.get("reason", ""), g.user["username"],
+                                               dt.datetime.now().strftime(TS_FMT), old["id"]))
+            audit("shift_assign_edit", {"emp": eid, "name": emp["name"], "id": old["id"],
+                                        "before": {"shift": old["shift_id"], "from": old["from_date"], "to": old["to_date"]},
+                                        "after": {"shift": shift["id"], "from": frm, "to": to}, "reason": f.get("reason")})
+            flash(f"{emp['name']}: shift entry changed to {shift['name']} {frm} to {to}. Punches re-paired."
+                  + (" (To date cut to the end of the From month.)" if clipped else ""), "ok")
+            return redirect(f.get("back") or url_for("att_employee", eid=eid))
         g.conn.execute("INSERT INTO employee_shifts(employee_id, shift_id, from_date, to_date, reason, created_by, created_at) VALUES (?,?,?,?,?,?,?)",
                        (eid, shift["id"], frm, to, f.get("reason", ""), g.user["username"], dt.datetime.now().strftime(TS_FMT)))
         audit("shift_assign", {"emp": eid, "name": emp["name"], "shift": shift["name"], "from": frm, "to": to, "reason": f.get("reason")})
