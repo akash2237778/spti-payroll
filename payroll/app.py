@@ -785,6 +785,13 @@ def employees_export():
 
 @app.route("/shifts", methods=["GET", "POST"])
 def shifts():
+    if request.method == "POST" and request.form.get("action") == "enable_std_hours":
+        if not is_admin():
+            abort(403)
+        db.enable_std_hours(g.conn)
+        audit("enable_std_hours", {"night_min": 480})
+        flash("Standard paid hours switched on: Night duty = 8 h a day, the rest is overtime", "ok")
+        return redirect(url_for("shifts"))
     if request.method == "POST":
         require_edit()
         f = request.form

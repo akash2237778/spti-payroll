@@ -705,3 +705,16 @@ def test_night_duty_standard_8h_rest_is_ot():
     # without the setting the standard day is the whole 11h30 shift: no OT
     plain = dict(night, std_min=None)
     assert engine.evaluate_day(D, [t(21, 3), t(9, 4, D + dt.timedelta(days=1))], plain, S, today=TODAY)["ot_min"] == 0
+
+
+def test_enable_std_hours_adds_column_and_sets_night(tmp_path):
+    import sqlite3
+    from payroll import db as dbm
+    conn = sqlite3.connect(tmp_path / "x.db"); conn.row_factory = sqlite3.Row
+    conn.execute("CREATE TABLE shifts (id INTEGER PRIMARY KEY, name TEXT, start_time TEXT, end_time TEXT)")
+    conn.execute("INSERT INTO shifts(name, start_time, end_time) VALUES ('General', '09:00', '17:30'), ('Night', '21:00', '09:00')")
+    assert not dbm.has_column(conn, "shifts", "std_min")
+    dbm.enable_std_hours(conn)
+    assert dict(conn.execute("SELECT name, std_min FROM shifts").fetchall()) == {"General": None, "Night": 480}
+    dbm.enable_std_hours(conn)   # running again changes nothing
+    assert dict(conn.execute("SELECT name, std_min FROM shifts").fetchall()) == {"General": None, "Night": 480}

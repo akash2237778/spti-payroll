@@ -2,6 +2,12 @@
 {% block title %}Shifts{% endblock %}
 {% block body %}
 <h1>Shifts &amp; working-hour rules</h1>
+{% if not has_std and is_admin %}
+<form method="post" class="card noprint" style="background:#fffbea" onsubmit="return confirm('Switch on standard paid hours and set the Night duty to 8 hours a day (the rest is overtime)?')">{{ csrf_field() }}
+  <b>Standard paid hours a day</b> are not switched on yet: a 21:00–09:00 night duty counts 11h30 as its normal day, so nights give no overtime.
+  <button name="action" value="enable_std_hours" style="margin-left:8px">Switch on (Night = 8 h)</button>
+</form>
+{% endif %}
 <p class="muted">Worked time = last punch − first punch − unpaid lunch. With a fixed <b>lunch window</b> (e.g. 13:00 for 30 min) lunch is deducted
 only for the part of the window the person was present: 09:00–17:30 = 8 h, 14:00–20:00 = 6 h (no lunch taken). Without a window, the break is deducted once the span is longer than "deduct break after".
 Employees marked <b>Paid lunch break</b> (on their profile) never lose it.
