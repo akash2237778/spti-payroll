@@ -239,6 +239,34 @@
       <p class="small muted" style="margin:4px 0 0">The rest of the net pay is paid in cash.</p>
       {% endif %}
     </form>
+    {% set bp = row.get('bank_paid') %}{% set bank_calc = p.get('bank', p.net) %}
+    {% if bank_calc > 0 or bp %}
+    <form method="post" action="{{ url_for('bank_paid', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc" id="bank-paid">{{ csrf_field() }}
+      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#bank-paid">
+      <b>Bank payment for {{ month }}</b>
+      <table style="margin-top:4px">
+        <tr><td>By bank (calculated)</td><td class="n">{{ cur }}{{ bank_calc|money }}</td></tr>
+        <tr class="{{ 'edited' if bp and bp.status != 'paid' }}"><td>Status</td><td class="n">
+          {% if not bp %}<span class="badge warn">not paid yet</span>
+          {% elif bp.status == 'paid' %}<span class="badge ok">✓ paid {{ bp.paid_on }}</span>
+          {% else %}<span class="badge bad">✗ failed {{ bp.paid_on }}</span>{% endif %}</td></tr>
+        {% if bp %}<tr class="{{ 'edited' if row.bank_diff }}"><td>Amount{{ ' paid' if bp.status == 'paid' }}</td><td class="n">{{ cur }}{{ bp.amount|money }}{% if row.bank_diff %} <span class="small">({{ '%+.2f'|format(row.bank_diff) }})</span>{% endif %}</td></tr>
+        {% if bp.reference %}<tr><td>UTR / reference</td><td class="n">{{ bp.reference }}</td></tr>{% endif %}
+        <tr><td colspan="2" class="small muted">recorded by {{ bp.created_by }} {{ (bp.created_at or '')[:16] }}{{ ' · ' ~ bp.note if bp.note }}</td></tr>{% endif %}
+      </table>
+      <div class="row" style="align-items:flex-end;margin-top:6px">
+        <div><label>Paid on</label><input type="date" name="paid_on" value="{{ bp.paid_on if bp else today_iso }}"></div>
+        <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" style="width:100px" value="{{ bp.amount|amt if bp else '' }}" placeholder="{{ bank_calc|amt }}"></div>
+        <div class="grow"><label>UTR / reference</label><input name="reference" style="width:100%" value="{{ bp.reference if bp else '' }}" placeholder="bank transaction no."></div>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <button class="small" name="action" value="paid">Mark paid</button>
+        <button class="light small" name="action" value="failed">Mark failed</button>
+        {% if bp %}<button class="light small" name="action" value="clear" onclick="return confirm('Remove the bank payment record?')">Undo</button>{% endif %}
+      </div>
+      <p class="small muted" style="margin:4px 0 0">Empty amount = the calculated bank amount. For many employees at once use <a href="{{ url_for('bank_sheet', month=month) }}">Payroll → Bank sheet</a>.</p>
+    </form>
+    {% endif %}
     {% set cp = row.get('cash_paid') %}
     <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">

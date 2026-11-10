@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
+{% block title %}Bank sheet {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
+{% block body %}
+<h1 class="noprint">Bank salary transfers
+  <span class="nav-month small"><form class="inline" method="get"><input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></form></span>
+  <a class="btn light small" href="{{ url_for('payroll_view', month=month) }}">← Payroll</a></h1>
+<div class="stats">
+  <div class="stat"><span>To pay by bank</span><b>{{ cur }}{{ calc_total|money }}</b><small>{{ rows|length }} employee(s)</small></div>
+  <div class="stat"><span>Recorded paid</span><b>{{ cur }}{{ paid_total|money }}</b><small>{{ n_paid }} employee(s)</small></div>
+  <div class="stat"><span>Not paid yet</span><b>{{ rows|length - n_paid - n_failed }}</b></div>
+  <div class="stat"><span>Failed / returned</span><b style="{{ 'color:var(--bad)' if n_failed }}">{{ n_failed }}</b></div>
+</div>
+<p class="small muted noprint">Once the bank confirms the transfer, tick the employees, enter the date and UTR / reference and press
+<b>Mark paid</b>. Amount left empty = the calculated bank amount. A reference typed on a row is used for that row only.
+<a href="{{ url_for('export_bank', month=month) }}">Bank transfer sheet (CSV)</a> includes the status.</p>
+
+<form method="post" id="bankform">{{ csrf_field() }}
+<div class="card noprint">
+  <div class="row" style="align-items:flex-end">
+    <div><label>Paid on</label><input type="date" name="paid_on" value="{{ today }}"></div>
+    <div><label>UTR / batch reference (all ticked)</label><input name="reference" style="width:200px" placeholder="e.g. NEFT batch no."></div>
+    <div class="grow"><label>Note</label><input name="note" style="width:100%" placeholder="optional"></div>
+    <button name="action" value="paid">Mark ticked paid</button>
+    <button class="light" name="action" value="failed">Mark ticked failed</button>
+    <button class="light" name="action" value="clear" onclick="return confirm('Remove the bank payment record of the ticked employees?')">Undo ticked</button>
+  </div>
+</div>
+<div class="card">
+  <h2 style="margin-top:0">{{ settings.company_name }} · Bank salary transfers · {{ month }}</h2>
+  <div class="scroll" style="max-height:none;border:0"><table>
+    <thead><tr><th class="noprint"><input type="checkbox" title="Tick all not yet paid"
+          onclick="document.querySelectorAll('input.bsel').forEach(function (c) { if (!c.dataset.paid || !this.checked) c.checked = this.checked; }, this)"></th>
+      <th>Emp ID</th><th>Name</th><th>Bank</th><th>Account No</th><th>IFSC</th><th class="n">By bank</th>
+      <th>Status</th><th class="n">Amount paid</th><th>Paid on</th><th>UTR / reference</th></tr></thead>
+    {% for r in rows %}{% set bp = r.bank_paid %}{% set calc = r.pay.get('bank', r.pay.net) %}
+    <tr class="{{ 'edited' if bp and (bp.status != 'paid' or r.bank_diff) }}">
+      <td class="noprint"><input type="checkbox" class="bsel" name="sel" value="{{ r.emp.id }}" {{ 'data-paid=1' if bp and bp.status == 'paid' }}></td>
+      <td>{{ r.emp.device_user_id }}</td>
+      <td><a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}#bank-paid">{{ r.emp.name }}</a></td>
+      <td class="small">{{ r.emp.bank_name }}</td><td class="small">{{ r.emp.bank_account }}</td><td class="small">{{ r.emp.ifsc }}</td>
+      <td class="n">{{ calc|money }}</td>
+      <td>{% if not bp %}<span class="badge warn">not paid</span>{% elif bp.status == 'paid' %}<span class="badge ok">✓ paid</span>{% else %}<span class="badge bad">✗ failed</span>{% endif %}</td>
+      <td class="n"><input name="amt_{{ r.emp.id }}" inputmode="decimal" style="width:95px;text-align:right" value="{{ bp.amount|amt if bp else '' }}" placeholder="{{ calc|amt }}">
+        {% if r.bank_diff %}<div class="small" style="color:var(--warn)">{{ '%+.2f'|format(r.bank_diff) }}</div>{% endif %}</td>
+      <td class="small">{{ bp.paid_on if bp else '' }}</td>
+      <td><input name="ref_{{ r.emp.id }}" style="width:150px" value="{{ bp.reference if bp else '' }}" placeholder="—"></td>
+    </tr>
+    {% else %}<tr><td colspan="11" class="muted">Nobody is paid by bank for {{ month }}.</td></tr>{% endfor %}
+    <tr><th class="noprint"></th><th colspan="5">Total</th><th class="n">{{ cur }}{{ calc_total|money }}</th><th></th><th class="n">{{ cur }}{{ paid_total|money }}</th><th colspan="2"></th></tr>
+  </table></div>
+</div>
+</form>
+<style>@media print { #bankform input { border: 0; background: none; } }</style>
+{% endblock %}

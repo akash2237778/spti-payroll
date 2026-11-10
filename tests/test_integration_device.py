@@ -618,6 +618,31 @@ def test_end_to_end(client):
     assert "Type the cash amount actually paid" in r.get_data(as_text=True)
     post(c, f"/employees/{sep_emp}/cash_paid", month="2026-09", paid_amount="1234.75")
     post(c, "/payroll?month=2026-09", action="reopen")
+    # bank payments: bulk mark paid on the bank sheet, single employee failed / undo, CSV status
+    with db.tx() as conn:
+        bank_rows = [r for r in payroll.compute_month(conn, "2026-09") if r["pay"].get("bank", r["pay"]["net"]) > 0]
+    assert len(bank_rows) >= 2
+    e1, e2 = bank_rows[0]["emp"]["id"], bank_rows[1]["emp"]["id"]
+    calc1 = round(bank_rows[0]["pay"].get("bank", bank_rows[0]["pay"]["net"]), 2)
+    r = post(c, "/payroll/bank?month=2026-09", sel=[str(e1), str(e2)], action="paid", paid_on="2026-10-05",
+             reference="NEFT-BATCH-1", **{f"amt_{e2}": "1,000", f"ref_{e2}": "UTR999"})
+    page = r.get_data(as_text=True)
+    assert "2 employee(s) marked paid on 2026-10-05" in page and "UTR999" in page and "NEFT-BATCH-1" in page
+    with db.tx() as conn:
+        got = {x["employee_id"]: dict(x) for x in conn.execute("SELECT * FROM bank_payments WHERE month='2026-09'")}
+    assert got[e1]["amount"] == calc1 and got[e1]["reference"] == "NEFT-BATCH-1" and got[e1]["status"] == "paid"
+    assert got[e2]["amount"] == 1000 and got[e2]["reference"] == "UTR999"
+    assert "Tick the employees first" in post(c, "/payroll/bank?month=2026-09", action="paid").get_data(as_text=True)
+    r = post(c, f"/employees/{e2}/bank_paid", month="2026-09", action="failed", paid_on="2026-10-06", amount="", reference="")
+    assert "marked failed / returned" in r.get_data(as_text=True)
+    assert 'id="bank-paid"' in c.get(f"/attendance/employee/{e2}?month=2026-09").get_data(as_text=True)
+    csv_text = c.get("/export/bank.csv?month=2026-09").get_data(as_text=True)
+    assert "Failed / returned" in csv_text and "NEFT-BATCH-1" in csv_text and "Not paid yet" in csv_text
+    assert "✓" in c.get("/payroll?month=2026-09").get_data(as_text=True)
+    post(c, f"/employees/{e2}/bank_paid", month="2026-09", action="clear")
+    post(c, "/payroll/bank?month=2026-09", sel=[str(e1)], action="clear")
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM bank_payments").fetchone()
     # manual deductions / additions from the employee attendance page
     def net(eid, m):
         with db.tx() as conn:

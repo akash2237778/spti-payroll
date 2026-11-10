@@ -19,7 +19,7 @@
     <a href="{{ url_for('leaves') }}" class="{{ 'on' if ep=='leaves' }}">Leaves</a>
     <a href="{{ url_for('gate_passes') }}" class="{{ 'on' if ep=='gate_passes' }}">Gate pass</a>
     {% if can_pay %}
-    <a href="{{ url_for('payroll_view') }}" class="{{ 'on' if ep in ('payroll_view','payslip','payslips','cash_sheet','esi_report') }}">Payroll</a>
+    <a href="{{ url_for('payroll_view') }}" class="{{ 'on' if ep in ('payroll_view','payslip','payslips','cash_sheet','bank_sheet','esi_report') }}">Payroll</a>
     <a href="{{ url_for('adjustments') }}" class="{{ 'on' if ep=='adjustments' }}">Advances</a>
     {% endif %}
     <a href="{{ url_for('employees') }}" class="{{ 'on' if ep.startswith('employee') }}">Employees</a>

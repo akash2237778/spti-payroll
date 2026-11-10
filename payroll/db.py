@@ -90,6 +90,12 @@ CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may di
     month TEXT NOT NULL, paid_amount REAL NOT NULL, note TEXT DEFAULT '', carried_month TEXT,
     created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS bank_payments (  -- bank transfer of the month's pay, recorded once the bank confirms it
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    month TEXT NOT NULL, amount REAL NOT NULL, paid_on TEXT, reference TEXT DEFAULT '',   -- UTR / transaction no.
+    status TEXT NOT NULL DEFAULT 'paid',   -- paid | failed
+    note TEXT DEFAULT '', created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
+
 CREATE TABLE IF NOT EXISTS advances (      -- money advanced to an employee; recovered through 'advance' adjustments
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     given_date TEXT NOT NULL, amount REAL NOT NULL, installment REAL, note TEXT DEFAULT '',

@@ -16,6 +16,7 @@
     {% endif %}
   {% endif %}
   <span class="sep"></span>
+  <a class="btn light" href="{{ url_for('bank_sheet', month=month) }}">Bank sheet</a>
   <a class="btn light" href="{{ url_for('cash_sheet', month=month) }}">Cash sheet</a>
   <a class="btn light" href="{{ url_for('esi_report', month=month) }}">ESI report</a>
   <a class="btn light" href="{{ url_for('payslips', month=month) }}" target="_blank">Payslips</a>
@@ -59,7 +60,7 @@
     <td class="n">{{ p.basic|money }}</td><td class="n">{{ p.ot_pay|money }}</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td><td class="n">{{ p.gross|money }}</td>
     <td class="n">{{ p.pf|money }}</td><td class="n" title="{{ ('ESI wages ' ~ (p.get('esi_wages', 0)|money) ~ ', employer ' ~ (p.get('esi_employer', 0)|money) ~ ('; ' ~ p.esi_note if p.get('esi_note') else '')) }}">{{ p.esi|money }}</td><td class="n">{{ (p.advance + p.tds + p.other_deduction)|money }}</td>
     <td class="n"><b>{{ p.net|money }}</b></td>
-    <td class="n {{ 'edited' if p.get('bank_override') }}" title="{{ p.get('pay_how', '') }}">{{ p.get('bank', p.net)|money }}</td>
+    <td class="n {{ 'edited' if p.get('bank_override') }}" title="{{ p.get('pay_how', '') }}">{{ p.get('bank', p.net)|money }}{% set bp = r.get('bank_paid') %}{% if bp %} <span class="small" style="color:{{ 'var(--ok)' if bp.status == 'paid' else 'var(--bad)' }}" title="{{ ('Paid ' ~ bp.paid_on ~ (' · ' ~ bp.reference if bp.reference else '')) if bp.status == 'paid' else ('Transfer failed ' ~ bp.paid_on) }}">{{ '✓' if bp.status == 'paid' else '✗' }}</span>{% endif %}</td>
     <td class="n {{ 'edited' if r.get('cash_diff') }}" title="{{ ('paid ' ~ (r.cash_paid.paid_amount|money) ~ ', difference ' ~ ('%+.2f'|format(r.cash_diff))) if r.get('cash_paid') else '' }}">{{ p.get('cash', 0)|money if p.get('cash') else '' }}{% if r.get('cash_paid') %} <span class="small">✓</span>{% endif %}</td>
     <td class="noprint"><a class="small" href="{{ url_for('payslip', eid=r.emp.id, month=month) }}" target="_blank">slip</a></td>
   </tr>{% endfor %}

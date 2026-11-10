@@ -98,7 +98,7 @@ def inject():
             "cur": g.get("settings", {}).get("currency", "₹"),
             "can_pay": can_pay(), "can_edit": can_edit(), "is_admin": is_admin(), "ROLES": ROLES,
             "emp_sort": emp_sort() if g.get("user") else "id", "url_with": url_with,
-            "printed_at": dt.datetime.now().strftime("%d %b %Y %H:%M")}
+            "printed_at": dt.datetime.now().strftime("%d %b %Y %H:%M"), "today_iso": dt.date.today().isoformat()}
 
 
 # ------------------------------------------------------------------ employee sort order (ID or name)
@@ -882,6 +882,7 @@ def att_employee(eid):
     adv = payroll.advance_ledger(g.conn, month, [eid]).get(eid) if can_pay() else None
     if can_pay():
         attach_cash_paid([row], month)
+        attach_bank_paid([row], month)
     return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
                            history=shift_history(eid, month), shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
@@ -1474,6 +1475,7 @@ def payroll_view():
     totals = {k: sum(r["pay"][k] for r in rows) for k in ("basic", "ot_pay", "allowance", "bonus", "gross", "pf", "esi",
                                                           "advance", "tds", "other_deduction", "total_deductions", "net")}
     attach_cash_paid(rows, month)
+    attach_bank_paid(rows, month)
     totals["esi_employer"] = sum(r["pay"].get("esi_employer", 0) for r in rows)
     totals["bank"] = sum(r["pay"].get("bank", r["pay"]["net"]) for r in rows)
     totals["cash"] = sum(r["pay"].get("cash", 0) for r in rows)
@@ -1608,9 +1610,14 @@ def export_formula_xlsx():
 def export_bank():
     month = cur_month()
     _, rows = payroll_rows(month)
-    return csv_response(f"bank_transfer_{month}.csv", ["Emp ID", "Name", "Bank", "Account No", "IFSC", "Amount"],
+    rows = attach_bank_paid(rows, month)
+    bp = lambda r, k: (r["bank_paid"] or {}).get(k, "")
+    return csv_response(f"bank_transfer_{month}.csv", ["Emp ID", "Name", "Bank", "Account No", "IFSC", "Amount",
+                                                       "Status", "Paid on", "UTR / reference", "Amount paid"],
                         [[r["emp"]["device_user_id"], r["emp"]["name"], r["emp"].get("bank_name", ""), r["emp"].get("bank_account", ""),
-                          r["emp"].get("ifsc", ""), r["pay"].get("bank", r["pay"]["net"])] for r in rows if r["pay"].get("bank", r["pay"]["net"]) > 0])
+                          r["emp"].get("ifsc", ""), r["pay"].get("bank", r["pay"]["net"]),
+                          BANK_STATUS.get(bp(r, "status"), "Not paid yet"), bp(r, "paid_on"), bp(r, "reference"), bp(r, "amount")]
+                         for r in rows if r["pay"].get("bank", r["pay"]["net"]) > 0 or r["bank_paid"]])
 
 
 @app.route("/export/cash.csv")
@@ -1626,6 +1633,122 @@ def export_cash():
                           r["cash_paid"]["paid_amount"] if r["cash_paid"] else "", r["cash_diff"] if r["cash_paid"] else "",
                           r["cash_paid"]["note"] if r["cash_paid"] else "", ""]
                          for r in rows if r["pay"].get("cash", 0) > 0 or r["cash_paid"]])
+
+
+BANK_STATUS = {"paid": "Paid", "failed": "Failed / returned"}
+
+
+def bank_paid_map(month, employee_ids=None):
+    """{employee_id: row} of bank transfers recorded for the month."""
+    q, args = "SELECT * FROM bank_payments WHERE month = ?", [month]
+    if employee_ids:
+        q += f" AND employee_id IN ({','.join('?' * len(employee_ids))})"
+        args += list(employee_ids)
+    return {r["employee_id"]: dict(r) for r in g.conn.execute(q, args)}
+
+
+def attach_bank_paid(rows, month):
+    paid = bank_paid_map(month)
+    for r in rows:
+        bp = paid.get(r["emp"]["id"])
+        r["bank_paid"] = bp
+        r["bank_diff"] = round(bp["amount"] - r["pay"].get("bank", r["pay"]["net"]), 2) if bp and bp["status"] == "paid" else None
+    return rows
+
+
+def parse_amount(text):
+    clean = re.sub(r"[₹,\s]|/-$|^rs\.?", "", (text or "").strip().lower())
+    try:
+        return round(float(clean), 2)
+    except ValueError:
+        raise ValueError(f"'{text}' is not an amount") from None
+
+
+def save_bank_paid(eid, month, amount, paid_on, reference="", status="paid", note=""):
+    """Record that the month's bank transfer went through (or failed). Allowed after finalizing: it does not change pay."""
+    if status not in BANK_STATUS:
+        raise ValueError("unknown status")
+    if amount < 0:
+        raise ValueError("negative amount")
+    dt.date.fromisoformat(paid_on)
+    g.conn.execute("""INSERT INTO bank_payments(employee_id, month, amount, paid_on, reference, status, note, created_by, created_at)
+                      VALUES (?,?,?,?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET amount=excluded.amount, paid_on=excluded.paid_on,
+                      reference=excluded.reference, status=excluded.status, note=excluded.note,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, amount, paid_on, (reference or "").strip(), status, (note or "").strip(), g.user["username"],
+                    dt.datetime.now().strftime(TS_FMT)))
+    audit("bank_paid", {"emp": eid, "month": month, "amount": amount, "paid_on": paid_on, "ref": reference, "status": status})
+
+
+@app.route("/payroll/bank", methods=["GET", "POST"])
+@pay_required
+def bank_sheet():
+    """Bank transfers of the month: mark employees paid (date + UTR) once the bank confirms, or failed."""
+    month = cur_month()
+    _, rows = payroll_rows(month)
+    if request.method == "POST":
+        f = request.form
+        calc = {r["emp"]["id"]: r["pay"].get("bank", r["pay"]["net"]) for r in rows}
+        ids = [int(x) for x in f.getlist("sel")]
+        if not ids:
+            flash("Tick the employees first", "error")
+            return redirect(url_for("bank_sheet", month=month))
+        action = f.get("action", "paid")
+        if action == "clear":
+            n = sum(g.conn.execute("DELETE FROM bank_payments WHERE employee_id=? AND month=?", (i, month)).rowcount for i in ids)
+            audit("bank_paid_clear", {"month": month, "emps": ids})
+            flash(f"Bank payment record removed for {n} employee(s)", "ok")
+            return redirect(url_for("bank_sheet", month=month))
+        paid_on = f.get("paid_on") or dt.date.today().isoformat()
+        n, errors = 0, []
+        for i in ids:
+            try:
+                amt = parse_amount(f.get(f"amt_{i}")) if (f.get(f"amt_{i}") or "").strip() else round(calc.get(i, 0), 2)
+                save_bank_paid(i, month, amt, paid_on, f.get(f"ref_{i}") or f.get("reference", ""), action, f.get("note", ""))
+                n += 1
+            except ValueError as e:
+                errors.append(f"#{i}: {e}")
+        flash(f"{n} employee(s) marked {BANK_STATUS.get(action, action).lower()} on {paid_on}"
+              + (f"; not saved: {', '.join(errors)}" if errors else ""), "error" if errors else "ok")
+        return redirect(url_for("bank_sheet", month=month))
+    paid = bank_paid_map(month)
+    rows = attach_bank_paid([r for r in rows if r["pay"].get("bank", r["pay"]["net"]) > 0 or r["emp"]["id"] in paid], month)
+    done = [r for r in rows if r["bank_paid"] and r["bank_paid"]["status"] == "paid"]
+    return render_template("bank_sheet.html", rows=rows, month=month,
+                           calc_total=sum(r["pay"].get("bank", r["pay"]["net"]) for r in rows),
+                           paid_total=sum(r["bank_paid"]["amount"] for r in done), n_paid=len(done),
+                           n_failed=sum(1 for r in rows if r["bank_paid"] and r["bank_paid"]["status"] == "failed"),
+                           today=dt.date.today().isoformat(), BANK_STATUS=BANK_STATUS)
+
+
+@app.route("/employees/<int:eid>/bank_paid", methods=["POST"])
+@pay_required
+def bank_paid(eid):
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    if f.get("action") == "clear":
+        g.conn.execute("DELETE FROM bank_payments WHERE employee_id=? AND month=?", (eid, month))
+        audit("bank_paid_clear", {"month": month, "emps": [eid]})
+        flash(f"Bank payment record for {emp['name']} {month} removed", "ok")
+        return redirect(back)
+    try:
+        if (f.get("amount") or "").strip():
+            amount = parse_amount(f["amount"])
+        else:
+            rows = [r for r in payroll_rows(month)[1] if r["emp"]["id"] == eid]
+            amount = round(rows[0]["pay"].get("bank", rows[0]["pay"]["net"]), 2) if rows else 0
+        status = f.get("action") if f.get("action") in BANK_STATUS else "paid"
+        save_bank_paid(eid, month, amount, f.get("paid_on") or dt.date.today().isoformat(), f.get("reference", ""), status,
+                       f.get("note", ""))
+        flash(f"Bank payment of {amount:g} to {emp['name']} for {month} marked {BANK_STATUS[status].lower()}", "ok")
+    except ValueError as e:
+        flash(f"Not saved: {e}", "error")
+    return redirect(back)
 
 
 def cash_paid_map(month, employee_ids=None):
