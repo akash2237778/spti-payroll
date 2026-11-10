@@ -25,6 +25,8 @@
     {% for k, l in [('monthly','Monthly (fixed per month)'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == (e.salary_type or 'monthly') }}>{{ l }}</option>{% endfor %}</select></div>
   <div><label>Rate ({{ cur }} per month / day / hour)</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ e.salary_rate or 0 }}"></div>
   <div><label>OT multiplier (1 = normal hourly rate, 2 = double)</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ e.ot_multiplier or 1 }}"></div>{% endif %}
+  <div><label>Working hours a day (blank = shift's hours; beyond it is OT)</label><input name="work_hours" type="number" step="0.25" min="1" max="16"
+      value="{{ (e.work_min / 60) if emp and e.work_min else '' }}" placeholder="shift default"></div>
   <div><label>Weekly off</label>{% set offs = (e.weekly_off if emp else '6').split(',') %}
     {% for w in WEEKDAYS %}<label class="chk"><input type="checkbox" name="weekly_off" value="{{ loop.index0 }}" {{ 'checked' if (loop.index0|string) in offs }}>{{ w }}</label>{% endfor %}</div>
   <div><label>&nbsp;</label>

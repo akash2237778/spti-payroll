@@ -1,0 +1,76 @@
+{% extends "base.html" %}{% from "_macros.html" import csrf_field, sort_toggle with context %}
+{% block title %}Roster {{ month }}{% endblock %}
+{% block page_class %}print-landscape{% endblock %}
+{% block body %}
+<h1>Shift roster
+  <span class="nav-month small noprint"><a class="btn light small" href="{{ url_with(month=prev) }}">‹</a>
+    <form class="inline" method="get"><input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></form>
+    <a class="btn light small" href="{{ url_with(month=nxt) }}">›</a></span>
+  {% if locked %}<span class="badge bad">payroll finalized - locked</span>{% endif %}
+</h1>
+<p class="small muted noprint">Plan who works which shift and who is off, day by day. A roster day wins over the employee's
+"Change shift" entries and fixed weekly off. <b>·&nbsp;X</b> = not planned (normal: shift X or weekly off).
+Codes: {% for s in shifts %}<b>{{ codes[s.id] }}</b> {{ s.name }} ({{ s.start_time }}–{{ s.end_time }}){{ ' · ' if not loop.last }}{% endfor %} · <b>WO</b> weekly off.
+Putting a shift on a normal weekly off makes it a working day; move the weekly off to another day with WO.</p>
+
+{% if can_edit and not locked %}
+<form method="post" id="bulkform" class="card noprint">{{ csrf_field() }}<input type="hidden" name="action" value="bulk">
+  <b>Plan several days at once</b> <span class="small muted">for the employees ticked in the grid</span>
+  <div class="row" style="align-items:flex-end;margin-top:6px">
+    <div><label>Set</label><select name="value">
+      {% for s in shifts %}<option value="s{{ s.id }}">{{ codes[s.id] }} · {{ s.name }}</option>{% endfor %}
+      <option value="WO">WO · weekly off</option><option value="def">Clear (back to normal)</option></select></div>
+    <div><label>From</label><input type="date" name="from" value="{{ days[0].isoformat() }}" min="{{ days[0].isoformat() }}" max="{{ days[-1].isoformat() }}"></div>
+    <div><label>To</label><input type="date" name="to" value="{{ days[-1].isoformat() }}" min="{{ days[0].isoformat() }}" max="{{ days[-1].isoformat() }}"></div>
+    <div><label>Only on (blank = every day)</label>
+      {% for w in WEEKDAYS %}<label class="chk"><input type="checkbox" name="wd" value="{{ loop.index0 }}">{{ w }}</label>{% endfor %}</div>
+    <button>Apply to ticked</button>
+  </div>
+  <p class="small muted" style="margin:4px 0 0">Examples: Night for a week → set N, From–To = that week. Weekly off on Wednesday instead of Sunday →
+    set WO only on Wed, then set the day shift only on Sun.</p>
+</form>
+{% endif %}
+
+<form method="post" id="cellform">{{ csrf_field() }}
+<div class="card">
+  <div class="row noprint" style="justify-content:space-between;align-items:center;margin-bottom:6px">
+    <span class="small muted">{{ grid|length }} employee(s) {{ sort_toggle() }}</span>
+    {% if can_edit and not locked %}<span><span class="small muted" id="changed"></span> <button id="savebtn" disabled>Save roster</button></span>{% endif %}
+  </div>
+  <div class="scroll roster-wrap"><table class="muster roster">
+    <thead><tr><th class="name">{% if can_edit and not locked %}<input type="checkbox" form="bulkform" title="Tick all"
+        onclick="document.querySelectorAll('input.rsel').forEach(function (c) { c.checked = this.checked; }, this)"> {% endif %}Employee</th>
+      {% for d in days %}<th class="{{ 'we' if d.weekday() == 6 }}{{ ' hol' if d.isoformat() in holidays }}" title="{{ holidays[d.isoformat()].name if d.isoformat() in holidays else '' }}">{{ d.day }}<br><span class="small">{{ WEEKDAYS[d.weekday()][:2] }}</span></th>{% endfor %}</tr></thead>
+    {% for r in grid %}
+    <tr><td class="name">{% if can_edit and not locked %}<input type="checkbox" class="rsel" name="sel" value="{{ r.emp.id }}" form="bulkform"> {% endif %}<a href="{{ url_for('att_employee', eid=r.emp.id, month=month) }}">{{ r.emp.name }}</a>
+        <span class="small muted">{{ r.emp.device_user_id }}</span></td>
+      {% for c in r.cells %}
+      <td class="rc {{ 'set' if c.cur != 'def' }} {{ 'off' if c.cur == 'WO' or (c.cur == 'def' and c.default == 'WO') }}">
+        {% if can_edit and not locked %}<select data-n="c_{{ r.emp.id }}_{{ c.day }}" data-orig="{{ c.cur }}" title="{{ r.emp.name }} · {{ c.day }} {{ month }}">
+          <option value="def" {{ 'selected' if c.cur == 'def' }}>·{{ c.default }}</option>
+          {% for s in shifts %}<option value="s{{ s.id }}" {{ 'selected' if c.cur == 's' ~ s.id }}>{{ codes[s.id] }}</option>{% endfor %}
+          <option value="WO" {{ 'selected' if c.cur == 'WO' }}>WO</option></select>
+        {% else %}{% if c.cur == 'def' %}<span class="muted">{{ c.default }}</span>{% elif c.cur == 'WO' %}WO{% else %}{% for s in shifts if 's' ~ s.id == c.cur %}{{ codes[s.id] }}{% endfor %}{% endif %}{% endif %}
+      </td>{% endfor %}
+    </tr>
+    {% else %}<tr><td colspan="{{ days|length + 1 }}" class="muted">No active employees.</td></tr>{% endfor %}
+  </table></div>
+</div>
+</form>
+<script>
+(function () {
+  var n = 0, out = document.getElementById('changed'), btn = document.getElementById('savebtn');
+  document.querySelectorAll('td.rc select').forEach(function (s) {
+    s.addEventListener('change', function () {
+      var was = s.hasAttribute('name');
+      if (s.value !== s.dataset.orig) { s.name = s.dataset.n; s.closest('td').classList.add('changed'); if (!was) n++; }
+      else { s.removeAttribute('name'); s.closest('td').classList.remove('changed'); if (was) n--; }
+      if (out) out.textContent = n ? n + ' day(s) changed' : '';
+      if (btn) btn.disabled = !n;
+    });
+  });
+  window.addEventListener('beforeunload', function (ev) { if (n && !window._saving) { ev.preventDefault(); ev.returnValue = ''; } });
+  var f = document.getElementById('cellform'); if (f) f.addEventListener('submit', function () { window._saving = true; });
+})();
+</script>
+{% endblock %}

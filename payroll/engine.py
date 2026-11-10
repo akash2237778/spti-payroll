@@ -497,8 +497,16 @@ def load_context(conn, start, end):
     gates = defaultdict(lambda: defaultdict(list))
     for r in conn.execute("SELECT * FROM gate_passes WHERE work_date BETWEEN ? AND ? ORDER BY out_time", (start.isoformat(), end.isoformat())):
         gates[r["employee_id"]][r["work_date"]].append(dict(r))
+    roster = defaultdict(dict)
+    try:
+        for r in conn.execute("SELECT * FROM roster WHERE work_date BETWEEN ? AND ?",
+                              ((start - dt.timedelta(days=STREAM_MARGIN_DAYS + 1)).isoformat(),
+                               (end + dt.timedelta(days=STREAM_MARGIN_DAYS + 1)).isoformat())):
+            roster[r["employee_id"]][r["work_date"]] = dict(r)
+    except Exception:   # older database without the roster table
+        pass
     return {"shifts": shifts, "holidays": holidays, "leaves": leaves, "overrides": overrides, "assignments": assignments,
-            "penalties": penalties, "gates": gates}
+            "penalties": penalties, "gates": gates, "roster": roster}
 
 
 def suggest_penalty(late_min, settings):
@@ -596,18 +604,39 @@ def employee_sessions(stream, shift, settings, shift_on=None):
     return pair_sessions(stream, shift, settings, expect=learned), typ
 
 
-def make_shift_on(assignments, default_shift, shifts):
-    """assignments: rows {shift_id, from_date, to_date} for one employee; the latest-created covering row wins."""
+def make_shift_on(assignments, default_shift, shifts, roster=None):
+    """assignments: rows {shift_id, from_date, to_date} for one employee; the latest-created covering row wins.
+    roster: {date: row} planned shifts per day - a roster day with a shift wins over everything else."""
     rows = sorted(assignments, key=lambda a: a["id"], reverse=True)
+    roster = roster or {}
     cache = {}
 
     def shift_on(d):
         if d not in cache:
             ds = d.isoformat()
-            hit = next((a for a in rows if a["from_date"] <= ds and (not a["to_date"] or ds <= a["to_date"])), None)
-            cache[d] = shifts.get(hit["shift_id"], default_shift) if hit else default_shift
+            ro = roster.get(ds)
+            if ro and ro.get("shift_id") and ro["shift_id"] in shifts:
+                cache[d] = shifts[ro["shift_id"]]
+            else:
+                hit = next((a for a in rows if a["from_date"] <= ds and (not a["to_date"] or ds <= a["to_date"])), None)
+                cache[d] = shifts.get(hit["shift_id"], default_shift) if hit else default_shift
         return cache[d]
     return shift_on
+
+
+def with_work_hours(shifts, emp):
+    """The employee's own working hours a day (e.g. 9 h) replace each shift's standard hours for that employee."""
+    wm = emp.get("work_min") if hasattr(emp, "get") else (emp["work_min"] if "work_min" in emp.keys() else None)
+    if not wm:
+        return shifts
+    return {k: dict(v, std_min=int(wm)) for k, v in shifts.items()}
+
+
+def is_weekly_off(d, offs, roster_row=None):
+    """Roster decides when it says so (1 = off, 0 = working day); otherwise the employee's weekly-off weekdays."""
+    if roster_row is not None and roster_row.get("off") is not None:
+        return bool(roster_row["off"])
+    return d.weekday() in offs
 
 
 NEIGHBOUR_DAYS = 7   # days evaluated either side of the range so the sandwich rule can see across month ends
@@ -620,16 +649,18 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
     outer_start, outer_end = start - dt.timedelta(days=NEIGHBOUR_DAYS), end + dt.timedelta(days=NEIGHBOUR_DAYS)
     ctx = load_context(conn, outer_start, outer_end)
     if machine_only:
-        for k in ("leaves", "overrides", "assignments", "penalties"):
+        for k in ("leaves", "overrides", "assignments", "penalties", "roster"):
             ctx[k] = defaultdict(dict) if k != "assignments" else defaultdict(list)
         ctx["gates"] = defaultdict(lambda: defaultdict(list))
-    default_shift = next(iter(ctx["shifts"].values()))
-    base_by_uid = {e["device_user_id"]: ctx["shifts"].get(e["shift_id"], default_shift) for e in employees}
-    streams = load_streams(conn, list(base_by_uid), outer_start, outer_end, int(settings.get("dedup_seconds") or 0), machine_only)
+    default_id = next(iter(ctx["shifts"]))
+    streams = load_streams(conn, [e["device_user_id"] for e in employees], outer_start, outer_end,
+                           int(settings.get("dedup_seconds") or 0), machine_only)
     result = {}
     for e in employees:
-        base_shift = base_by_uid[e["device_user_id"]]
-        shift_on = make_shift_on(ctx["assignments"].get(e["id"], []), base_shift, ctx["shifts"])
+        shifts_e = with_work_hours(ctx["shifts"], e)
+        base_shift = shifts_e.get(e["shift_id"], shifts_e[default_id])
+        roster_e = ctx["roster"].get(e["id"], {})
+        shift_on = make_shift_on(ctx["assignments"].get(e["id"], []), base_shift, shifts_e, roster_e)
         stream = streams.get(e["device_user_id"], [])
         multi = bool(e.get("multi_punch"))
         emp_settings = dict(settings, break_pair_max_h=MULTI_GAP_MAX_H) if multi else settings
@@ -647,7 +678,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
             active = (not e["join_date"] or ds >= e["join_date"][:10]) and (not e["exit_date"] or ds <= e["exit_date"][:10])
             rec = evaluate_day(
                 d, None, shift, settings, sessions=by_day.get(d, []),
-                weekly_off=d.weekday() in offs, holiday=ctx["holidays"].get(ds),
+                weekly_off=is_weekly_off(d, offs, roster_e.get(ds)), holiday=ctx["holidays"].get(ds),
                 leave=ctx["leaves"][e["id"]].get(ds), override=ctx["overrides"][e["id"]].get(ds),
                 active=active, today=today, paid_break=bool(e.get("paid_break")), multi=multi,
                 gate_passes=ctx["gates"][e["id"]].get(ds, ()))
@@ -656,6 +687,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
             rec["late_penalty_set"] = ds in ctx["penalties"][e["id"]]
             rec["late_penalty_suggest"] = suggest_penalty(rec["late_min"], settings) if rec["late_min"] else 0
             rec["shift_changed"] = shift is not base_shift
+            rec["roster"] = roster_e.get(ds)
             if rec["sessions"] and start <= d <= end:
                 used[shift.get("id") or shift["name"]] += 1
             if not rec["override"] and "in progress" not in rec["flags"]:

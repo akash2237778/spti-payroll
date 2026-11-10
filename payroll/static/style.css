@@ -269,3 +269,16 @@ fieldset.grace legend { font-weight: 600; font-size: 13px; padding: 0 6px; color
 /* save messages float near the top of the screen so they are seen even when the page reopens lower down */
 .flashes { position: fixed; top: 60px; right: 16px; z-index: 30; width: min(440px, calc(100vw - 32px)); display: grid; gap: 8px; }
 .flashes .flash { margin: 0; cursor: pointer; box-shadow: 0 6px 20px rgba(16, 37, 60, .18); }
+
+/* roster grid */
+.roster-wrap { max-height: 72vh; }
+table.roster td.rc { padding: 1px !important; text-align: center; }
+table.roster td.rc select { padding: 2px 1px; min-height: 0; font-size: 12px; width: 42px; border-color: transparent; background: transparent; -webkit-appearance: none; appearance: none; text-align: center; cursor: pointer; }
+table.roster td.rc select:hover, table.roster td.rc select:focus { border-color: var(--line); background: #fff; }
+table.roster td.rc.off { background: #f1f3f6; }
+table.roster td.rc.set { background: #eef6ff; font-weight: 600; }
+table.roster td.rc.set.off { background: #e6ebf2; }
+table.roster td.rc.changed { background: #fff3c4 !important; }
+table.roster th.we { background: #e6ebf2; }
+table.roster th.hol { background: #fde8d8; }
+@media print { table.roster td.rc select { width: auto; font-size: 7px; } }

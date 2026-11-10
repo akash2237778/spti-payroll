@@ -458,6 +458,18 @@ def employee_edit(eid):
         for k in EMP_FLAGS:
             vals[k] = 1 if f.get(k) else 0
         vals["weekly_off"] = ",".join(f.getlist("weekly_off"))
+        wh = (f.get("work_hours") or "").strip()
+        if wh:
+            try:
+                hrs = float(wh)
+            except ValueError:
+                hrs = -1
+            if not 1 <= hrs <= 16:
+                flash("Working hours a day must be between 1 and 16 (blank = the shift's hours)", "error")
+                return redirect(request.url)
+            vals["work_min"] = int(round(hrs * 60))
+        else:
+            vals["work_min"] = None
         for k in ("department", "designation", "phone", "bank_name", "bank_account", "ifsc", "uan", "esi_no", "notes"):
             vals[k] = vals[k] or ""
         if not can_pay():
@@ -538,6 +550,108 @@ def _ensure_range_unlocked(from_date, to_date):
     for r in g.conn.execute("SELECT month FROM payroll_runs WHERE status = 'final'"):
         if a.strftime("%Y-%m") <= r["month"] <= b.strftime("%Y-%m"):
             abort(409, f"Payroll for {r['month']} is finalized; reopen it before changing shifts in that month.")
+
+
+def shift_codes(shifts):
+    """Short code per shift for the roster grid: G, N ... (two letters when first letters clash)."""
+    codes, used = {}, set()
+    for s in shifts:
+        c = (s["name"] or "?")[:1].upper()
+        if c in used or c == "W":
+            c = (s["name"] or "??")[:2].upper()
+        used.add(c)
+        codes[s["id"]] = c
+    return codes
+
+
+@app.route("/roster", methods=["GET", "POST"])
+def roster():
+    """Month grid: plan each employee's shift and weekly off day by day (wins over shift changes and fixed weekly offs)."""
+    month = cur_month()
+    m_start, m_end = engine.month_range(month)
+    shifts = [dict(r) for r in g.conn.execute("SELECT * FROM shifts ORDER BY id")]
+    shift_ids = {s["id"] for s in shifts}
+    if request.method == "POST":
+        require_edit()
+        ensure_unlocked(month)
+        f = request.form
+        now, user = dt.datetime.now().strftime(TS_FMT), g.user["username"]
+
+        def put(eid, day, val):
+            ds = day.isoformat()
+            if val == "def":
+                return g.conn.execute("DELETE FROM roster WHERE employee_id=? AND work_date=?", (eid, ds)).rowcount
+            if val == "WO":
+                sid, off = None, 1
+            elif val.startswith("s") and val[1:].isdigit() and int(val[1:]) in shift_ids:
+                sid, off = int(val[1:]), 0
+            else:
+                return 0
+            g.conn.execute("""INSERT INTO roster(employee_id, work_date, shift_id, off, created_by, created_at) VALUES (?,?,?,?,?,?)
+                              ON CONFLICT(employee_id, work_date) DO UPDATE SET shift_id=excluded.shift_id, off=excluded.off,
+                              created_by=excluded.created_by, created_at=excluded.created_at""", (eid, ds, sid, off, user, now))
+            return 1
+
+        n = 0
+        if f.get("action") == "bulk":
+            ids = [int(x) for x in f.getlist("sel")]
+            val = f.get("value", "")
+            wds = {int(x) for x in f.getlist("wd")}
+            try:
+                a = dt.date.fromisoformat(f.get("from") or m_start.isoformat())
+                b = dt.date.fromisoformat(f.get("to") or m_end.isoformat())
+            except ValueError:
+                abort(400)
+            a, b = max(a, m_start), min(b, m_end)
+            if not ids:
+                flash("Tick the employees first", "error")
+                return redirect(url_for("roster", month=month))
+            for eid in ids:
+                d = a
+                while d <= b:
+                    if not wds or d.weekday() in wds:
+                        n += put(eid, d, val)
+                    d += dt.timedelta(days=1)
+            audit("roster_bulk", {"month": month, "emps": ids, "value": val, "from": a.isoformat(), "to": b.isoformat(),
+                                  "weekdays": sorted(wds)})
+        else:
+            for k, val in f.items():
+                parts = k.split("_")
+                if len(parts) == 3 and parts[0] == "c" and parts[1].isdigit() and parts[2].isdigit():
+                    day = int(parts[2])
+                    if 1 <= day <= m_end.day:
+                        n += put(int(parts[1]), m_start.replace(day=day), val)
+            audit("roster_cells", {"month": month, "cells": n})
+        flash(f"Roster saved ({n} day(s) changed). Attendance re-calculated with the new plan.", "ok")
+        return redirect(url_for("roster", month=month, **({"sort": request.args["sort"]} if request.args.get("sort") else {})))
+    emps = [dict(r) for r in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql())]
+    codes = shift_codes(shifts)
+    by_id = {s["id"]: s for s in shifts}
+    ctx = engine.load_context(g.conn, m_start, m_end)
+    days = [m_start + dt.timedelta(days=i) for i in range((m_end - m_start).days + 1)]
+    grid = []
+    for e in emps:
+        base = by_id.get(e["shift_id"]) or shifts[0]
+        plain = engine.make_shift_on(ctx["assignments"].get(e["id"], []), base, by_id)   # without the roster
+        offs = {int(x) for x in (e["weekly_off"] or "").split(",") if x.strip() != ""}
+        ro = ctx["roster"].get(e["id"], {})
+        cells = []
+        for d in days:
+            dflt = "WO" if d.weekday() in offs else codes[plain(d)["id"]]
+            r = ro.get(d.isoformat())
+            if r is None:
+                cur = "def"
+            elif r["off"] == 1:
+                cur = "WO"
+            elif r["shift_id"]:
+                cur = f"s{r['shift_id']}"
+            else:
+                cur = "def"
+            cells.append({"day": d.day, "default": dflt, "cur": cur})
+        grid.append({"emp": e, "cells": cells, "n_set": len(ro)})
+    prev, nxt = month_nav(month)
+    return render_template("roster.html", month=month, days=days, grid=grid, shifts=shifts, codes=codes, prev=prev, nxt=nxt,
+                           locked=payroll.run_status(g.conn, month) == "final", holidays=ctx["holidays"])
 
 
 @app.route("/employees/<int:eid>/shifts", methods=["POST"])

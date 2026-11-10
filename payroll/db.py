@@ -90,6 +90,13 @@ CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may di
     month TEXT NOT NULL, paid_amount REAL NOT NULL, note TEXT DEFAULT '', carried_month TEXT,
     created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS roster (         -- planned day-by-day: shift and / or weekly off (wins over shift changes)
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    work_date TEXT NOT NULL,
+    shift_id INTEGER REFERENCES shifts(id),   -- NULL = the shift the employee would have anyway
+    off INTEGER,                              -- 1 = weekly off this day, 0 = working day, NULL = normal weekly off
+    created_by TEXT, created_at TEXT, UNIQUE(employee_id, work_date));
+
 CREATE TABLE IF NOT EXISTS bank_payments (  -- bank transfer of the month's pay, recorded once the bank confirms it
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     month TEXT NOT NULL, amount REAL NOT NULL, paid_on TEXT, reference TEXT DEFAULT '',   -- UTR / transaction no.
@@ -211,7 +218,9 @@ def init_db():
                                 ("employees", "comp_hra", "REAL DEFAULT 0"), ("employees", "comp_conveyance", "REAL DEFAULT 0"),
                                 ("employees", "comp_other", "REAL DEFAULT 0"),
                                 ("employees", "multi_punch", "INTEGER DEFAULT 0"),
-                                ("shifts", "ot_grace_min", "INTEGER DEFAULT 5")):
+                                ("shifts", "ot_grace_min", "INTEGER DEFAULT 5"),
+                                # own working hours a day (NULL = the shift's standard hours)
+                                ("employees", "work_min", "INTEGER")):
             if col not in {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}:
                 c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
         c.execute("DELETE FROM settings WHERE key = 'late_penalty_mode'")  # replaced by day-by-day choice

@@ -658,6 +658,59 @@ def test_end_to_end(client):
                                          back=f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     post(c, "/adjustments?month=2026-09", delete=str(aid), back=f"/attendance/employee/{sep_emp}?month=2026-09")
     assert abs(net(sep_emp, "2026-09") - n0) < 0.01
+    # ---- own working hours per employee: 9 h instead of the shift's 8 h -> less overtime, same payable days
+    from payroll.app import EMP_FIELDS, EMP_FLAGS
+    def emp_form(eid, **extra):
+        with db.tx() as conn:
+            row = dict(conn.execute("SELECT * FROM employees WHERE id=?", (eid,)).fetchone())
+        data = {k: ("" if row.get(k) is None else str(row[k])) for k in EMP_FIELDS}
+        data.update({k: "on" for k in EMP_FLAGS if row.get(k)})
+        data["weekly_off"] = [w for w in (row["weekly_off"] or "").split(",") if w]
+        data.update(extra)
+        return data
+    def month_sum(eid, m):
+        with db.tx() as conn:
+            return payroll.compute_month(conn, m, employee_ids={eid})[0]["summary"]
+    s0 = month_sum(sep_emp, "2026-09")
+    r = post(c, f"/employees/{sep_emp}", **emp_form(sep_emp, work_hours="20"))
+    assert "between 1 and 16" in r.get_data(as_text=True)
+    post(c, f"/employees/{sep_emp}", **emp_form(sep_emp, work_hours="9"))
+    with db.tx() as conn:
+        assert conn.execute("SELECT work_min FROM employees WHERE id=?", (sep_emp,)).fetchone()[0] == 540
+    s9 = month_sum(sep_emp, "2026-09")
+    assert s9["std_min"] == 540 and s9["payable_days"] == s0["payable_days"]
+    assert s9["ot_min_gross"] <= s0["ot_min_gross"]
+    assert 'name="work_hours"' in c.get(f"/employees/{sep_emp}").get_data(as_text=True)
+    post(c, f"/employees/{sep_emp}", **emp_form(sep_emp, work_hours=""))
+    assert month_sum(sep_emp, "2026-09")["ot_min_gross"] == s0["ot_min_gross"]
+
+    # ---- roster: plan Night for a week, move the weekly off from Sunday to Wednesday
+    with db.tx() as conn:
+        night_id = conn.execute("SELECT id FROM shifts WHERE name='Night'").fetchone()[0]
+        day_id = conn.execute("SELECT id FROM shifts WHERE name='General'").fetchone()[0]
+    page = c.get("/roster?month=2026-09").get_data(as_text=True)
+    assert f'data-n="c_{sep_emp}_6"' in page and "Shift roster" in page
+    r = post(c, "/roster?month=2026-09", action="bulk", sel=[str(sep_emp)], value=f"s{night_id}", **{"from": "2026-09-07", "to": "2026-09-13"})
+    assert "Roster saved (7 day(s) changed)" in r.get_data(as_text=True)
+    r = post(c, "/roster?month=2026-09", action="bulk", sel=[str(sep_emp)], value="WO", wd=["2"], **{"from": "2026-09-14", "to": "2026-09-20"})
+    assert "(1 day(s) changed)" in r.get_data(as_text=True)          # only Wed 16
+    post(c, "/roster?month=2026-09", **{f"c_{sep_emp}_20": f"s{day_id}"})   # Sunday 20 becomes a working day
+    with db.tx() as conn:
+        emp = [dict(conn.execute("SELECT * FROM employees WHERE id=?", (sep_emp,)).fetchone())]
+        dd = {d["date"].day: d for d in engine.employee_days(conn, emp, dt.date(2026, 9, 1), dt.date(2026, 9, 30),
+                                                               db.get_settings(conn), today=dt.date(2026, 11, 10))[sep_emp]["days"]}
+    assert all(dd[x]["shift"]["name"] == "Night" for x in range(7, 14)) and dd[14]["shift"]["name"] != "Night"
+    assert dd[16]["status"] in ("WO", "WOP") and dd[20]["status"] not in ("WO", "WOP")
+    assert dd[16]["roster"]["off"] == 1 and dd[20]["roster"]["off"] == 0
+    # clearing puts the normal plan back
+    post(c, "/roster?month=2026-09", action="bulk", sel=[str(sep_emp)], value="def", **{"from": "2026-09-01", "to": "2026-09-30"})
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM roster WHERE employee_id=?", (sep_emp,)).fetchone()
+    # finalized month: roster locked
+    post(c, "/payroll?month=2026-09", action="finalize")
+    assert post(c, "/roster?month=2026-09", **{f"c_{sep_emp}_3": "WO"}).status_code == 409
+    post(c, "/payroll?month=2026-09", action="reopen")
+
     # final totals save without a reason (no silent rejection); fractional payable days accepted
     r = post(c, f"/attendance/employee/{sep_emp}/totals", month="2026-09", payable_days="20.25", ot_hours="", reason="")
     assert "Final totals for" in r.get_data(as_text=True)
