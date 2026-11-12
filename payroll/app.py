@@ -1,5 +1,6 @@
 """Flask web application for SPTI Payroll."""
 import csv
+from collections import defaultdict
 import datetime as dt
 import functools
 import io
@@ -990,8 +991,69 @@ def attendance_pdf_view():
     emps = g.conn.execute("SELECT id, name, device_user_id, department, active FROM employees ORDER BY active DESC, "
                           + emp_order_sql()).fetchall()
     depts = sorted({e["department"] for e in emps if e["department"]})
+    groups = employee_groups()
+    gid = request.args.get("group", type=int)
+    if gid and not ids:
+        ids = next((grp["members"] for grp in groups if grp["id"] == gid), [])
     prev, nxt = month_nav(month)
-    return render_template("attendance_pdf.html", emps=emps, depts=depts, month=month, prev=prev, nxt=nxt, ids=set(ids), layout=layout)
+    return render_template("attendance_pdf.html", emps=emps, depts=depts, month=month, prev=prev, nxt=nxt, ids=set(ids), layout=layout,
+                           groups=groups, gid=gid)
+
+
+def employee_groups():
+    groups = [dict(r) for r in g.conn.execute("SELECT * FROM employee_groups ORDER BY name COLLATE NOCASE")]
+    members = defaultdict(list)
+    for r in g.conn.execute("SELECT group_id, employee_id FROM employee_group_members"):
+        members[r["group_id"]].append(r["employee_id"])
+    for grp in groups:
+        grp["members"] = sorted(members[grp["id"]])
+    return groups
+
+
+@app.route("/attendance/groups", methods=["POST"])
+@edit_required
+def employee_group_save():
+    """Create / update / rename / delete a saved employee group (used to pick employees on the Attendance PDF page)."""
+    f = request.form
+    month = f.get("month") or dt.date.today().strftime("%Y-%m")
+    layout = f.get("layout", "employee")
+    action = f.get("action")
+    ids = sorted({int(x) for x in f.getlist("eid") if x.isdigit()})
+    gid = int(f["group_id"]) if (f.get("group_id") or "").isdigit() else None
+    name = (f.get("group_name") or "").strip()
+    now, user = dt.datetime.now().strftime(TS_FMT), g.user["username"]
+    if action == "delete" and gid:
+        row = g.conn.execute("SELECT name FROM employee_groups WHERE id=?", (gid,)).fetchone() or abort(404)
+        g.conn.execute("DELETE FROM employee_group_members WHERE group_id=?", (gid,))
+        g.conn.execute("DELETE FROM employee_groups WHERE id=?", (gid,))
+        audit("group_delete", {"group": row["name"]})
+        flash(f"Group '{row['name']}' deleted", "ok")
+        return redirect(url_for("attendance_pdf_view", month=month, layout=layout))
+    if not ids:
+        flash("Tick the employees for the group first", "error")
+        return redirect(url_for("attendance_pdf_view", month=month, layout=layout, group=gid))
+    if action == "update" and gid:
+        row = g.conn.execute("SELECT * FROM employee_groups WHERE id=?", (gid,)).fetchone() or abort(404)
+        if name and name.lower() != row["name"].lower():
+            if g.conn.execute("SELECT 1 FROM employee_groups WHERE name=? COLLATE NOCASE AND id != ?", (name, gid)).fetchone():
+                flash(f"A group called '{name}' already exists", "error")
+                return redirect(url_for("attendance_pdf_view", month=month, layout=layout, group=gid))
+            g.conn.execute("UPDATE employee_groups SET name=? WHERE id=?", (name, gid))
+        label = name or row["name"]
+    else:
+        if not name:
+            flash("Give the new group a name", "error")
+            return redirect(url_for("attendance_pdf_view", month=month, layout=layout, eid=ids))
+        if g.conn.execute("SELECT 1 FROM employee_groups WHERE name=? COLLATE NOCASE", (name,)).fetchone():
+            flash(f"A group called '{name}' already exists - pick it and press 'Update group' to change it", "error")
+            return redirect(url_for("attendance_pdf_view", month=month, layout=layout, eid=ids))
+        gid = g.conn.execute("INSERT INTO employee_groups(name, created_by, created_at) VALUES (?,?,?)", (name, user, now)).lastrowid
+        label = name
+    g.conn.execute("DELETE FROM employee_group_members WHERE group_id=?", (gid,))
+    g.conn.executemany("INSERT INTO employee_group_members(group_id, employee_id) VALUES (?,?)", [(gid, i) for i in ids])
+    audit("group_save", {"group": label, "emps": ids})
+    flash(f"Group '{label}' saved with {len(ids)} employee(s)", "ok")
+    return redirect(url_for("attendance_pdf_view", month=month, layout=layout, group=gid))
 
 
 @app.route("/attendance/monthly")

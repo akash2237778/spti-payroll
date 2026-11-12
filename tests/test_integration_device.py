@@ -674,6 +674,23 @@ def test_end_to_end(client):
     r = post(c, "/attendance/pdf", month="2026-09") if False else c.get("/attendance/pdf?month=2026-09&download=1", follow_redirects=True)
     assert "Tick at least one employee" in r.get_data(as_text=True)
 
+    # ---- employee groups for the attendance PDF (kept across months)
+    r = post(c, "/attendance/groups", month="2026-09", action="new", group_name="Night staff", eid=[str(prem), str(sep_emp)])
+    assert "Group 'Night staff' saved with 2 employee(s)" in r.get_data(as_text=True).replace('&#39;', "'")
+    with db.tx() as conn:
+        gid = conn.execute("SELECT id FROM employee_groups WHERE name='Night staff'").fetchone()[0]
+    page = c.get(f"/attendance/pdf?month=2026-10&group={gid}").get_data(as_text=True).replace('&#39;', "'")     # next month: still there, members ticked
+    assert "Night staff (2)" in page and f'value="{prem}" checked' in page and f'value="{sep_emp}" checked' in page
+    assert "already exists" in post(c, "/attendance/groups", month="2026-10", action="new", group_name="night STAFF",
+                                    eid=[str(prem)]).get_data(as_text=True).replace('&#39;', "'")
+    assert "Tick the employees" in post(c, "/attendance/groups", month="2026-10", action="new", group_name="x").get_data(as_text=True).replace('&#39;', "'")
+    r = post(c, "/attendance/groups", month="2026-10", action="update", group_id=str(gid), group_name="Nights", eid=[str(prem)])
+    assert "Group 'Nights' saved with 1 employee(s)" in r.get_data(as_text=True).replace('&#39;', "'")
+    r = post(c, "/attendance/groups", month="2026-10", action="delete", group_id=str(gid))
+    assert "Group 'Nights' deleted" in r.get_data(as_text=True).replace('&#39;', "'")
+    with db.tx() as conn:
+        assert not conn.execute("SELECT 1 FROM employee_group_members").fetchone()
+
     # ---- own working hours per employee: 9 h instead of the shift's 8 h -> less overtime, same payable days
     from payroll.app import EMP_FIELDS, EMP_FLAGS
     def emp_form(eid, **extra):

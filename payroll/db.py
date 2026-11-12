@@ -90,6 +90,14 @@ CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may di
     month TEXT NOT NULL, paid_amount REAL NOT NULL, note TEXT DEFAULT '', carried_month TEXT,
     created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS employee_groups (   -- saved selections of employees (kept across months)
+    id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_by TEXT, created_at TEXT);
+
+CREATE TABLE IF NOT EXISTS employee_group_members (
+    group_id INTEGER NOT NULL REFERENCES employee_groups(id) ON DELETE CASCADE,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    PRIMARY KEY (group_id, employee_id));
+
 CREATE TABLE IF NOT EXISTS roster (         -- planned day-by-day: shift and / or weekly off (wins over shift changes)
     id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
     work_date TEXT NOT NULL,

@@ -1,4 +1,4 @@
-{% extends "base.html" %}
+{% extends "base.html" %}{% from "_macros.html" import csrf_field with context %}
 {% block title %}Attendance PDF{% endblock %}
 {% block body %}
 <h1>Attendance PDF
@@ -8,6 +8,8 @@
   <a class="btn light small" href="{{ url_for('att_monthly', month=month) }}">← Attendance</a></h1>
 <p class="muted small">Attendance only - no salary or money. Tick the employees, choose the layout and download.</p>
 
+<form method="post" action="{{ url_for('employee_group_save') }}" id="groupform">{{ csrf_field() }}
+  <input type="hidden" name="month" value="{{ month }}"></form>
 <form method="get" target="_blank" id="pdfform">
   <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="download" value="1">
   <div class="card">
@@ -15,6 +17,18 @@
       <div><label>Layout</label>
         <label class="chk"><input type="radio" name="layout" value="employee" {{ 'checked' if layout != 'muster' }}> One page per employee (every day: in / out / hours / status)</label>
         <label class="chk"><input type="radio" name="layout" value="muster" {{ 'checked' if layout == 'muster' }}> Muster sheet (all on one landscape grid)</label></div>
+    </div>
+    <div class="row group-bar" style="align-items:flex-end;margin-top:10px">
+      <div><label>Employee group</label><select id="grp" name="group_id" form="groupform" onchange="pickGroup()">
+        <option value="">— none —</option>
+        {% for grp in groups %}<option value="{{ grp.id }}" data-m="{{ grp.members|join(',') }}" {{ 'selected' if grp.id == gid }}>{{ grp.name }} ({{ grp.members|length }})</option>{% endfor %}
+      </select></div>
+      {% if can_edit %}
+      <div><label>Group name</label><input name="group_name" form="groupform" id="gname" placeholder="e.g. Night staff" style="width:170px"></div>
+      <button type="submit" form="groupform" name="action" value="new" class="light" onclick="return withTicks()">Save ticked as new group</button>
+      <button type="submit" form="groupform" name="action" value="update" class="light" id="gupd" onclick="return withTicks()">Update group</button>
+      <button type="submit" form="groupform" name="action" value="delete" class="light" id="gdel" onclick="return confirm('Delete this group? The employees are not affected.')">Delete group</button>
+      {% endif %}
     </div>
     <div class="row" style="align-items:flex-end;margin-top:10px">
       <div class="grow"><label>Find</label><input id="q" placeholder="name or ID" style="width:100%" oninput="filt()"></div>
@@ -60,11 +74,33 @@ function tick(on) {
   (on ? shown() : document.querySelectorAll('.ep')).forEach(function (l) { l.querySelector('input').checked = on; });
   count();
 }
+function pickGroup() {
+  var o = document.getElementById('grp').selectedOptions[0], m = (o && o.dataset.m ? o.dataset.m.split(',') : []);
+  if (o && o.value) {
+    document.querySelectorAll('.ep input').forEach(function (c) { c.checked = m.indexOf(c.value) >= 0; });
+    var gn = document.getElementById('gname'); if (gn) gn.placeholder = 'rename: ' + o.textContent.replace(/ \(\d+\)$/, '');
+  }
+  ['gupd', 'gdel'].forEach(function (id) { var b = document.getElementById(id); if (b) b.disabled = !(o && o.value); });
+  count();
+}
+function withTicks() {   // copy the ticked employees into the group form
+  var f = document.getElementById('groupform');
+  f.querySelectorAll('input[name=eid]').forEach(function (x) { x.remove(); });
+  var n = 0;
+  document.querySelectorAll('.ep input:checked').forEach(function (c) {
+    var h = document.createElement('input'); h.type = 'hidden'; h.name = 'eid'; h.value = c.value; f.appendChild(h); n++;
+  });
+  var lay = document.querySelector('input[name=layout]:checked');
+  var hl = f.querySelector('input[name=layout]') || f.appendChild(Object.assign(document.createElement('input'), {type: 'hidden', name: 'layout'}));
+  hl.value = lay ? lay.value : 'employee';
+  if (!n) { alert('Tick the employees for the group first'); return false; }
+  return true;
+}
 function count() {
   var n = document.querySelectorAll('.ep input:checked').length;
   document.getElementById('n').textContent = n + ' employee(s) ticked';
   document.getElementById('go').disabled = document.getElementById('save').disabled = !n;
 }
-count();
+pickGroup();
 </script>
 {% endblock %}
