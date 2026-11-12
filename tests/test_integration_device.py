@@ -658,6 +658,22 @@ def test_end_to_end(client):
                                          back=f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     post(c, "/adjustments?month=2026-09", delete=str(aid), back=f"/attendance/employee/{sep_emp}?month=2026-09")
     assert abs(net(sep_emp, "2026-09") - n0) < 0.01
+    # ---- attendance-only PDF for a few employees
+    import pymupdf
+    page = c.get("/attendance/pdf?month=2026-09").get_data(as_text=True)
+    assert 'name="eid"' in page and "Muster sheet" in page
+    r = c.get(f"/attendance/pdf?month=2026-09&download=1&layout=employee&eid={sep_emp}&eid={prem}")
+    assert r.status_code == 200 and r.mimetype == "application/pdf" and r.data[:5] == b"%PDF-"
+    doc = pymupdf.open(stream=r.data, filetype="pdf")
+    txt = "".join(pg.get_text() for pg in doc)
+    assert doc.page_count == 2 and "Attendance - September 2026" in txt and "Payable days" in txt
+    assert "Salary" not in txt and "Net pay" not in txt and "Rs" not in txt          # attendance only
+    r = c.get(f"/attendance/pdf?month=2026-09&download=1&layout=muster&eid={sep_emp}&eid={prem}&save=1")
+    doc = pymupdf.open(stream=r.data, filetype="pdf")
+    assert doc.page_count == 1 and "Attendance muster" in doc[0].get_text() and "attachment" in r.headers["Content-Disposition"]
+    r = post(c, "/attendance/pdf", month="2026-09") if False else c.get("/attendance/pdf?month=2026-09&download=1", follow_redirects=True)
+    assert "Tick at least one employee" in r.get_data(as_text=True)
+
     # ---- own working hours per employee: 9 h instead of the shift's 8 h -> less overtime, same payable days
     from payroll.app import EMP_FIELDS, EMP_FLAGS
     def emp_form(eid, **extra):

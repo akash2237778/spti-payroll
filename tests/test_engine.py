@@ -718,3 +718,15 @@ def test_enable_std_hours_adds_column_and_sets_night(tmp_path):
     assert dict(conn.execute("SELECT name, std_min FROM shifts").fetchall()) == {"General": None, "Night": 480}
     dbm.enable_std_hours(conn)   # running again changes nothing
     assert dict(conn.execute("SELECT name, std_min FROM shifts").fetchall()) == {"General": None, "Night": 480}
+
+
+def test_pdf_writer_makes_a_valid_document():
+    import pymupdf
+    from payroll.pdf import PDF, A4_LANDSCAPE, fit, text_width
+    p = PDF(title="t")
+    p.add_page(); p.text(30, 40, "Hello (world) – café", 12, bold=True); p.rect(30, 50, 100, 20, fill="#eeeeee", stroke="#999999")
+    p.add_page(A4_LANDSCAPE); p.line(10, 10, 200, 10); p.text(10, 30, "right", 9, align="right", width=100)
+    doc = pymupdf.open(stream=p.output(), filetype="pdf")
+    assert doc.page_count == 2 and doc[1].rect.width > doc[1].rect.height
+    assert "Hello (world) - café" in doc[0].get_text()
+    assert text_width(fit("a very long employee name indeed", 60, 9), 9) <= 60

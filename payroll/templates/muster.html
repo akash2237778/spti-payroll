@@ -7,6 +7,7 @@
   <a class="btn light small noprint" href="{{ url_for('export_punches', month=month) }}">Raw punches CSV</a>
   <button class="light small noprint" onclick="window.print()">Print</button>
   <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month) }}" target="_blank">Print all employee cards</a>
+  <a class="btn light small noprint" href="{{ url_for('attendance_pdf_view', month=month) }}">Attendance PDF</a>
   {% if can_pay %}<a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month) }}">Excel with formulas</a>{% endif %}</h1>
 {% if can_edit %}
 <form method="post" action="{{ url_for('holidays', year=month[:4]) }}" class="row noprint" style="margin-bottom:8px;align-items:center">{{ csrf_field() }}

@@ -970,6 +970,30 @@ def att_daily():
     return redirect(url_for("dashboard", date=day.isoformat()))
 
 
+@app.route("/attendance/pdf")
+def attendance_pdf_view():
+    """Pick employees + month; download their attendance (no salary) as a PDF."""
+    from . import attendance_pdf
+    month = cur_month()
+    ids = sorted({int(x) for x in request.args.getlist("eid") if x.isdigit()})
+    layout = request.args.get("layout", "employee")
+    if request.args.get("download"):
+        if not ids:
+            flash("Tick at least one employee", "error")
+            return redirect(url_for("attendance_pdf_view", month=month, layout=layout))
+        rows = sort_rows(payroll.compute_month(g.conn, month, employee_ids=set(ids)))
+        hol = engine.load_context(g.conn, *engine.month_range(month))["holidays"]
+        data = attendance_pdf.build(rows, month, g.settings.get("company_name", ""), "muster" if layout == "muster" else "employee", hol)
+        audit("attendance_pdf", {"month": month, "layout": layout, "emps": ids})
+        name = f"attendance_{month}" + (f"_{rows[0]['emp']['name'].replace(' ', '_')}" if len(rows) == 1 else f"_{len(rows)}_employees") + ".pdf"
+        return send_file(io.BytesIO(data), mimetype="application/pdf", as_attachment=bool(request.args.get("save")), download_name=name)
+    emps = g.conn.execute("SELECT id, name, device_user_id, department, active FROM employees ORDER BY active DESC, "
+                          + emp_order_sql()).fetchall()
+    depts = sorted({e["department"] for e in emps if e["department"]})
+    prev, nxt = month_nav(month)
+    return render_template("attendance_pdf.html", emps=emps, depts=depts, month=month, prev=prev, nxt=nxt, ids=set(ids), layout=layout)
+
+
 @app.route("/attendance/monthly")
 def att_monthly():
     month = cur_month()

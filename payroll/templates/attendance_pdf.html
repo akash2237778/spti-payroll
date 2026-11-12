@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Attendance PDF{% endblock %}
+{% block body %}
+<h1>Attendance PDF
+  <span class="nav-month small"><a class="btn light small" href="{{ url_with(month=prev) }}">‹</a>
+    <form class="inline" method="get"><input type="month" name="month" value="{{ month }}" onchange="this.form.submit()"></form>
+    <a class="btn light small" href="{{ url_with(month=nxt) }}">›</a></span>
+  <a class="btn light small" href="{{ url_for('att_monthly', month=month) }}">← Attendance</a></h1>
+<p class="muted small">Attendance only - no salary or money. Tick the employees, choose the layout and download.</p>
+
+<form method="get" target="_blank" id="pdfform">
+  <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="download" value="1">
+  <div class="card">
+    <div class="row" style="align-items:flex-end">
+      <div><label>Layout</label>
+        <label class="chk"><input type="radio" name="layout" value="employee" {{ 'checked' if layout != 'muster' }}> One page per employee (every day: in / out / hours / status)</label>
+        <label class="chk"><input type="radio" name="layout" value="muster" {{ 'checked' if layout == 'muster' }}> Muster sheet (all on one landscape grid)</label></div>
+    </div>
+    <div class="row" style="align-items:flex-end;margin-top:10px">
+      <div class="grow"><label>Find</label><input id="q" placeholder="name or ID" style="width:100%" oninput="filt()"></div>
+      {% if depts %}<div><label>Department</label><select id="dept" onchange="filt()"><option value="">All</option>
+        {% for d in depts %}<option>{{ d }}</option>{% endfor %}</select></div>{% endif %}
+      <div><label class="chk"><input type="checkbox" id="showleft" onchange="filt()"> show left employees</label></div>
+      <button type="button" class="light" onclick="tick(true)">Tick shown</button>
+      <button type="button" class="light" onclick="tick(false)">Untick all</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="emp-pick">
+      {% for e in emps %}
+      <label class="chk ep" data-q="{{ (e.name ~ ' ' ~ e.device_user_id)|lower }}" data-dept="{{ e.department or '' }}" data-active="{{ e.active }}"
+             {{ 'hidden' if not e.active }}>
+        <input type="checkbox" name="eid" value="{{ e.id }}" {{ 'checked' if e.id in ids }} onchange="count()">
+        <span>{{ e.name }}</span> <span class="small muted">{{ e.device_user_id }}{{ ' · ' ~ e.department if e.department }}{{ ' · left' if not e.active }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  <div class="row" style="position:sticky;bottom:0;background:var(--bg, #f4f6f9);padding:8px 0;align-items:center">
+    <b id="n">0 employee(s) ticked</b>
+    <button id="go" disabled>Open PDF</button>
+    <button id="save" name="save" value="1" class="light" disabled>Download PDF</button>
+  </div>
+</form>
+<style>
+.emp-pick { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 2px 14px; }
+.emp-pick .ep { padding: 4px 6px; border-radius: 6px; margin: 0; }
+.emp-pick .ep:has(input:checked) { background: #eef5fb; }
+</style>
+<script>
+function shown() { return Array.prototype.filter.call(document.querySelectorAll('.ep'), function (l) { return !l.hidden; }); }
+function filt() {
+  var q = document.getElementById('q').value.toLowerCase().trim(), d = (document.getElementById('dept') || {}).value || '',
+      left = document.getElementById('showleft').checked;
+  document.querySelectorAll('.ep').forEach(function (l) {
+    l.hidden = !((!q || l.dataset.q.indexOf(q) >= 0) && (!d || l.dataset.dept === d) && (left || l.dataset.active === '1'));
+  });
+}
+function tick(on) {
+  (on ? shown() : document.querySelectorAll('.ep')).forEach(function (l) { l.querySelector('input').checked = on; });
+  count();
+}
+function count() {
+  var n = document.querySelectorAll('.ep input:checked').length;
+  document.getElementById('n').textContent = n + ' employee(s) ticked';
+  document.getElementById('go').disabled = document.getElementById('save').disabled = !n;
+}
+count();
+</script>
+{% endblock %}

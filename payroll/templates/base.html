@@ -13,7 +13,7 @@
           onclick="var o = document.body.classList.toggle('nav-open'); this.setAttribute('aria-expanded', o)">☰</button>
   <nav class="mainnav">
     <a href="{{ url_for('dashboard') }}" class="{{ 'on' if ep=='dashboard' }}">Today</a>
-    <a href="{{ url_for('att_monthly') }}" class="{{ 'on' if ep in ('att_monthly','att_employee','att_day','attendance_report') }}">Attendance</a>
+    <a href="{{ url_for('att_monthly') }}" class="{{ 'on' if ep in ('att_monthly','att_employee','att_day','attendance_report','attendance_pdf_view') }}">Attendance</a>
     <a href="{{ url_for('roster') }}" class="{{ 'on' if ep=='roster' }}">Roster</a>
     <a href="{{ url_for('exceptions') }}" class="{{ 'on' if ep=='exceptions' }}">Exceptions</a>
     <a href="{{ url_for('changes_view') }}" class="{{ 'on' if ep=='changes_view' }}">Changes</a>
