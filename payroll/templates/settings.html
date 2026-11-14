@@ -67,6 +67,7 @@
   <div><label>Employee ESI %</label><input name="esi_rate" value="{{ s.esi_rate }}"></div>
   <div><label>Employer ESI %</label><input name="esi_employer_rate" value="{{ s.get('esi_employer_rate', '3.25') }}"></div>
   <div><label>ESI wage ceiling ({{ cur }})</label><input name="esi_gross_ceiling" value="{{ s.esi_gross_ceiling }}"></div>
+  <div><label>Legal minimum wage per month ({{ cur }}) - starting salary in the ESI calculator</label><input name="min_wage_monthly" inputmode="decimal" value="{{ s.get('min_wage_monthly', '') }}" placeholder="e.g. state rate for unskilled"></div>
   <div><label>Ceiling, person with disability ({{ cur }})</label><input name="esi_disabled_ceiling" value="{{ s.get('esi_disabled_ceiling', '25000') }}"></div>
   <div><label>No employee share if avg daily wage ≤ ({{ cur }})</label><input name="esi_low_wage_daily" value="{{ s.get('esi_low_wage_daily', '176') }}"></div>
   <div style="grid-column:1 / -1"><label class="chk"><input type="checkbox" name="salary_components" {{ 'checked' if s.get('salary_components') == '1' }}>

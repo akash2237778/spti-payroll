@@ -684,6 +684,10 @@ def test_end_to_end(client):
     assert p0["esi_covered"] and p0["esi"] > 0 and p0["esi_calc"] == p0["esi"] and not p0["esi_edited"]
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     assert 'id="esi-calc" hidden' in page and "ESI calculator" in page and 'id="esi-edit"' in page
+    assert 'id="wi-ot" inputmode="decimal" style="width:90px" value="0"' in page and 'id="wi-sal"' in page
+    post(c, "/settings", action="settings", min_wage_monthly="12500")
+    page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert 'id="wi-sal" inputmode="decimal" style="width:95px" value="12500"' in page
     r = post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="50", reason="adjusted")
     assert "deducted instead of the calculated" in r.get_data(as_text=True)
     p1 = pay_of(sep_emp)

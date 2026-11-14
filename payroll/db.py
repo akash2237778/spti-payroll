@@ -176,6 +176,7 @@ DEFAULT_SETTINGS = {
     "dedup_seconds": "120",
     "pf_rate": "12", "pf_wage_ceiling": "15000",
     "esi_rate": "0.75", "esi_gross_ceiling": "21000",
+    "min_wage_monthly": "",             # legal minimum wage per month - default 'salary' in the ESI calculator
     # ESIC (Code on Social Security 2020, wages u/s 2(88), ESIC circular 11.12.2025):
     "esi_mode": "ticked",               # ESI only for employees with ESI ticked (the tick always decides)
     "esi_employer_rate": "3.25",

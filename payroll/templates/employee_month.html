@@ -209,7 +209,7 @@
   <div class="card grow noprint esi-calc" id="esi-calc" hidden style="background:#f8fafc;min-width:300px"
        data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
        data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
-       data-basic="{{ p.basic }}" data-allow="{{ p.allowance + p.bonus }}">
+       data-allow="0">
     <b>ESI wages - how {{ month }} is worked out</b>
     <table style="margin-top:4px">
       <tr><td>Salary earned (incl. HRA / conveyance)</td><td class="n">{{ p.basic|money }}</td></tr>
@@ -225,11 +225,15 @@
         <td class="n">{{ p.get('esi_calc', p.esi)|money }} / {{ p.esi_employer|money }}</td></tr>
       {% if p.esi_note %}<tr><td colspan="2" class="small muted">{{ p.esi_note }}</td></tr>{% endif %}
     </table>
+    {% set min_wage = (settings.get('min_wage_monthly') or '')|trim %}
     <div class="small" style="margin-top:8px"><b>What if</b> <span class="muted">(nothing is saved)</span></div>
     <div class="row" style="align-items:flex-end;margin-top:2px">
-      <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" style="width:90px" value="{{ p.ot_pay|amt }}"></div>
-      <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" style="width:90px" value="{{ ex_parts|amt }}"></div>
+      <div><label>Salary earned</label><input class="wi" id="wi-sal" inputmode="decimal" style="width:95px" value="{{ min_wage if min_wage else (emp.salary_rate or 0)|amt }}"></div>
+      <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" style="width:90px" value="0"></div>
+      <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" style="width:90px" value="0"></div>
+      <button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ min_wage if min_wage else (emp.salary_rate or 0)|amt }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button>
     </div>
+    <div class="small muted">Salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "this employee's monthly rate - set the legal minimum wage in Settings to start from it" }}.</div>
     <div class="small" id="wi-out" style="margin-top:4px"></div>
     <p class="small muted" style="margin:4px 0 0">Coverage is decided in the first month of each contribution period (Apr / Oct) and continues to its end.</p>
   </div>
@@ -260,7 +264,7 @@
     var fmt = function (v) { return v.toLocaleString('en-IN', {maximumFractionDigits: 2}); };
     function run() {
       var ot = num(document.getElementById('wi-ot').value), ex = num(document.getElementById('wi-ex').value);
-      var total = num(box.dataset.basic) + ot + num(box.dataset.allow), excl = ot + ex;
+      var total = num(document.getElementById('wi-sal').value) + ot + num(box.dataset.allow), excl = ot + ex;
       var wages = total - excl + Math.max(0, excl - total / 2), lim = num(box.dataset.ceiling);
       var emp = Math.ceil(wages * num(box.dataset.rate) / 100), er = Math.ceil(wages * num(box.dataset.er) / 100);
       document.getElementById('wi-out').innerHTML = 'ESI wages <b>' + fmt(wages) + '</b> - ' +
