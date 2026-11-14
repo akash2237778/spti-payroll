@@ -685,6 +685,9 @@ def test_end_to_end(client):
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     assert 'id="esi-calc" hidden' in page and "ESI calculator" in page and 'id="esi-edit"' in page
     assert 'id="wi-ot" inputmode="decimal" value="0"' in page and 'id="wi-sal"' in page
+    with db.tx() as conn:
+        pd = payroll.compute_month(conn, "2026-09", employee_ids={sep_emp})[0]["summary"]["payable_days"]
+    assert f'id="wi-days" inputmode="decimal" value="{pd:g}"' in page and 'id="wi-net"' in page
     post(c, "/settings", action="settings", min_wage_monthly="12500")
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     assert 'id="wi-sal" inputmode="decimal" value="12500"' in page

@@ -256,7 +256,7 @@
     <div class="sub noprint esi-calc" id="esi-calc" hidden
          data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
          data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
-         data-allow="0">
+         data-allow="0" data-divisor="{{ p.divisor or 30 }}" data-low="{{ settings.esi_low_wage_daily or 176 }}">
       <div class="sub-head"><h3>ESI calculator</h3>
         <button type="button" class="light small" onclick="document.getElementById('esi-calc').hidden = true" title="Close">✕</button></div>
       <div class="esi-cols">
@@ -279,14 +279,25 @@
         </div>
         <div class="whatif">
           <div class="small" style="margin-bottom:4px"><b>What if</b> <span class="muted">· nothing is saved</span></div>
-          <div class="fgrid one">
-            <div><label>Salary earned</label><input class="wi" id="wi-sal" inputmode="decimal" value="{{ wi_sal }}"></div>
+          {% set wi_days = s.payable_days|days %}
+          <div class="fgrid">
+            <div><label>Monthly salary</label><input class="wi" id="wi-sal" inputmode="decimal" value="{{ wi_sal }}"></div>
+            <div><label>Days paid <span class="muted">of {{ p.divisor or 30 }}</span></label><input class="wi" id="wi-days" inputmode="decimal" value="{{ wi_days }}"
+                 title="From attendance: {{ s.get('cnt_P', 0)|days }} present{{ ' + ' ~ (s.get('paid_off_days', 0)|days) ~ ' paid off days' if s.get('paid_off_days') }}"></div>
             <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" value="0"></div>
-            <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" value="0"></div>
+            <div><label>HRA + conveyance <span class="muted">/ month</span></label><input class="wi" id="wi-ex" inputmode="decimal" value="0"></div>
           </div>
+          <table class="kv wi-table">
+            <tr><td>Salary earned <span class="small muted" id="wi-earn-how"></span></td><td class="n" id="wi-earn"></td></tr>
+            <tr class="total"><th>ESI wages</th><th class="n" id="wi-wages"></th></tr>
+            <tr><td>Employee share {{ settings.esi_rate or 0.75 }}%</td><td class="n" id="wi-emp"></td></tr>
+            <tr><td>Employer share {{ settings.esi_employer_rate or 3.25 }}%</td><td class="n" id="wi-er"></td></tr>
+            <tr class="total grand"><th>ESI wages − employee share</th><th class="n" id="wi-net"></th></tr>
+          </table>
           <div class="wi-out" id="wi-out"></div>
-          <div class="actions"><button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ wi_sal }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button></div>
-          <p class="hint">Salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "the monthly rate - set the legal minimum wage in Settings to start from it" }}.
+          <div class="actions"><button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ wi_sal }}';document.getElementById('wi-days').value='{{ wi_days }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button></div>
+          <p class="hint">Days are taken from this month's attendance ({{ s.get('cnt_P', 0)|days }} present{{ ' + ' ~ (s.get('paid_off_days', 0)|days) ~ ' paid weekly offs / holidays / leave' if s.get('paid_off_days') }}{{ ', after edits' if s.get('edited', {}).payable_days }}).
+            Monthly salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "the monthly rate - set the legal minimum wage in Settings to start from it" }}.
             Coverage is decided in the first month of each contribution period (Apr / Oct).</p>
         </div>
       </div>
@@ -317,14 +328,23 @@
     var box = document.getElementById('esi-calc'); if (!box) return;
     var num = function (v) { v = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; };
     var fmt = function (v) { return v.toLocaleString('en-IN', {maximumFractionDigits: 2}); };
+    var set = function (id, v) { document.getElementById(id).textContent = v; };
     function run() {
-      var ot = num(document.getElementById('wi-ot').value), ex = num(document.getElementById('wi-ex').value);
-      var total = num(document.getElementById('wi-sal').value) + ot + num(box.dataset.allow), excl = ot + ex;
-      var wages = total - excl + Math.max(0, excl - total / 2), lim = num(box.dataset.ceiling);
-      var emp = Math.ceil(wages * num(box.dataset.rate) / 100), er = Math.ceil(wages * num(box.dataset.er) / 100);
-      document.getElementById('wi-out').innerHTML = 'ESI wages <b>' + fmt(wages) + '</b><br>' +
-        (wages <= lim ? '<span class="ok-text">Within the ' + fmt(lim) + ' limit</span> · employee <b>' + fmt(emp) + '</b> · employer <b>' + fmt(er) + '</b>'
-                      : '<span class="bad-text">Above the ' + fmt(lim) + ' limit: not covered</span> (unless already covered this period)');
+      var monthly = num(document.getElementById('wi-sal').value), days = num(document.getElementById('wi-days').value);
+      var div = num(box.dataset.divisor) || 30, f = Math.min(days, div) / div;
+      var earned = Math.round(monthly * f * 100) / 100;                  // salary for the days paid, as in payroll
+      var ot = num(document.getElementById('wi-ot').value), ex = num(document.getElementById('wi-ex').value) * f;
+      var total = earned + ot + num(box.dataset.allow), excl = ot + ex;
+      var wages = Math.round((total - excl + Math.max(0, excl - total / 2)) * 100) / 100, lim = num(box.dataset.ceiling);
+      var covered = wages <= lim;
+      var lowDay = days > 0 && wages / days <= num(box.dataset.low);    // low daily wage: no employee share
+      var emp = covered && !lowDay ? Math.ceil(wages * num(box.dataset.rate) / 100) : 0;
+      var er = covered ? Math.ceil(wages * num(box.dataset.er) / 100) : 0;
+      set('wi-earn', fmt(earned)); set('wi-earn-how', fmt(monthly) + ' × ' + fmt(days) + ' / ' + div);
+      set('wi-wages', fmt(wages)); set('wi-emp', fmt(emp)); set('wi-er', fmt(er)); set('wi-net', fmt(wages - emp));
+      document.getElementById('wi-out').innerHTML = covered
+        ? '<span class="ok-text">Within the ' + fmt(lim) + ' limit</span>' + (lowDay ? ' · daily wage ' + fmt(wages / days) + ' is at or below ' + fmt(num(box.dataset.low)) + ': no employee share' : '')
+        : '<span class="bad-text">Above the ' + fmt(lim) + ' limit: not covered</span> (unless already covered this period)';
     }
     box.querySelectorAll('input.wi').forEach(function (i) { i.addEventListener('input', run); });
     run();
