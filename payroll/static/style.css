@@ -381,3 +381,8 @@ tr.esi-row td { vertical-align: middle; }
 .print-only { display: none; }
 @media print { .print-only { display: inline; } }
 .sub table.kv .inline-edit input { width: 84px; flex: 0 0 84px; }
+
+tr.esi-row.saved > td { background: #eef8f1; }
+tr.esi-row .badge.ok { margin-left: 4px; }
+#esi-apply-btn[disabled] { opacity: .55; cursor: default; }
+.esi-cols { align-items: start; }

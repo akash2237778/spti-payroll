@@ -683,7 +683,9 @@ def test_end_to_end(client):
     p0 = pay_of(sep_emp)
     assert p0["esi_covered"] and p0["esi"] > 0 and p0["esi_calc"] == p0["esi"] and not p0["esi_edited"]
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
-    assert 'id="esi-calc" hidden' in page and "ESI calculator" in page and 'id="esi-edit"' in page
+    assert 'id="esi-calc" hidden' not in page and 'id="esi-calc"' in page and 'id="esi-edit"' in page   # ESI ticked: open
+    assert "ESI wages <span" not in page                                                                 # not in the pay table
+    assert "calculated · not saved yet" in page
     assert 'id="wi-ot" inputmode="decimal" value="0"' in page and 'id="wi-sal"' in page
     with db.tx() as conn:
         pd = payroll.compute_month(conn, "2026-09", employee_ids={sep_emp})[0]["summary"]["payable_days"]
@@ -692,7 +694,7 @@ def test_end_to_end(client):
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     assert 'id="wi-sal" inputmode="decimal" value="12500"' in page
     r = post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="50", reason="adjusted")
-    assert "deducted instead of the calculated" in r.get_data(as_text=True)
+    assert "saved: 50 deducted (calculated" in r.get_data(as_text=True)
     p1 = pay_of(sep_emp)
     assert p1["esi"] == 50 and p1["esi_calc"] == p0["esi"] and p1["esi_edited"] and p1["esi_edit_reason"] == "adjusted"
     assert p1["esi_employer"] == p0["esi_employer"] and p1["esi_wages"] == p0["esi_wages"]
@@ -702,14 +704,19 @@ def test_end_to_end(client):
     assert "cannot be negative" in post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="-5").get_data(as_text=True)
     assert pay_of(sep_emp)["esi"] == 50                       # negative refused
     post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", action="clear")
-    # saving the calculated amount unchanged keeps no edit
-    post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount=str(p0["esi"]))
-    assert not pay_of(sep_emp)["esi_edited"]
+    # saving the calculated amount is recorded and shown as saved + deducted
+    r = post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount=str(p0["esi"]))
+    assert pay_of(sep_emp)["esi_edited"] and pay_of(sep_emp)["esi"] == p0["esi"]
+    assert "deducted</span>" in r.get_data(as_text=True) and "✓ saved" in r.get_data(as_text=True)
+    post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", action="clear")
     # calculator "Apply": bank this month = ESI wages - employee share, ESI deduction = employee share
     page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
     assert 'id="esi-apply"' in page and 'form="esi-edit" name="amount"' in page
     post(c, f"/employees/{sep_emp}/esi_apply", month="2026-09", bank_amount="12000", esi_amount=str(p0["esi"]))
-    assert not pay_of(sep_emp)["esi_edited"] and pay_of(sep_emp)["bank"] == 12000        # same as calculated: no ESI edit
+    pp = pay_of(sep_emp)
+    assert pp["esi_edited"] and pp["esi"] == p0["esi"] and pp["bank"] == 12000
+    page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert 'data-cur-bank="12000.0"' in page and f'data-cur-esi="{float(p0["esi"])}"' in page        # lets the button grey out
     r = post(c, f"/employees/{sep_emp}/esi_apply", month="2026-09", bank_amount="12485.65", esi_amount="95")
     assert "by bank, ESI deduction" in r.get_data(as_text=True)
     pa = pay_of(sep_emp)

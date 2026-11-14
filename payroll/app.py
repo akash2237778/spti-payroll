@@ -1958,17 +1958,13 @@ def esi_edit(eid):
     reason = (f.get("reason") or "").strip() or "manual edit"
     rows = [r for r in payroll.compute_month(g.conn, month, employee_ids={eid})]
     calc = rows[0]["pay"].get("esi_calc", rows[0]["pay"]["esi"]) if rows else None
-    if calc is not None and abs(amount - calc) < 0.005:   # same as calculated: no edit to keep
-        g.conn.execute("DELETE FROM esi_overrides WHERE employee_id=? AND month=?", (eid, month))
-        flash(f"ESI for {emp['name']} {month}: {amount:g}, as calculated", "ok")
-        return redirect(back)
     g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)
                       ON CONFLICT(employee_id, month) DO UPDATE SET amount=excluded.amount, reason=excluded.reason,
                       created_by=excluded.created_by, created_at=excluded.created_at""",
                    (eid, month, amount, reason, g.user["username"], dt.datetime.now().strftime(TS_FMT)))
     audit("esi_edit", {"emp": eid, "month": month, "calculated": calc, "edited": amount, "reason": reason})
-    flash(f"ESI for {emp['name']} {month}: {amount:g} deducted instead of the calculated {calc:g}" if calc is not None
-          else f"ESI for {emp['name']} {month} set to {amount:g}", "ok")
+    flash(f"ESI deduction for {emp['name']} {month} saved: {amount:g} deducted"
+          + (f" (calculated {calc:g})" if calc is not None and abs(amount - calc) >= 0.005 else ""), "ok")
     return redirect(back)
 
 
@@ -1996,12 +1992,10 @@ def esi_apply(eid):
                       ON CONFLICT(employee_id, month) DO UPDATE SET bank_amount=excluded.bank_amount, note=excluded.note,
                       created_by=excluded.created_by, created_at=excluded.created_at""",
                    (eid, month, bank, "from ESI calculator", user, now))
-    g.conn.execute("DELETE FROM esi_overrides WHERE employee_id=? AND month=?", (eid, month))
-    rows = payroll.compute_month(g.conn, month, employee_ids={eid})
-    calc = rows[0]["pay"]["esi"] if rows else None
-    if calc is None or abs(esi - calc) >= 0.005:   # keep an edit only when it differs from the calculated ESI
-        g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)""",
-                       (eid, month, esi, "from ESI calculator", user, now))
+    g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET amount=excluded.amount, reason=excluded.reason,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, esi, "from ESI calculator", user, now))
     audit("esi_apply", {"emp": eid, "month": month, "bank": bank, "esi": esi})
     cur = g.settings.get("currency", "₹")
     flash(f"{emp['name']} {month}: {cur}{bank:,.2f} by bank, ESI deduction {cur}{esi:,.2f}; the rest of the net pay in cash", "ok")
