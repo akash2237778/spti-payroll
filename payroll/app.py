@@ -1929,6 +1929,45 @@ def bank_sheet():
                            today=dt.date.today().isoformat(), BANK_STATUS=BANK_STATUS)
 
 
+@app.route("/employees/<int:eid>/esi_edit", methods=["POST"])
+@pay_required
+def esi_edit(eid):
+    """Employee ESI deduction for a month entered by hand (the calculated amount is kept for comparison)."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    ensure_unlocked(month)
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    if f.get("action") == "clear" or not (f.get("amount") or "").strip():
+        n = g.conn.execute("DELETE FROM esi_overrides WHERE employee_id=? AND month=?", (eid, month)).rowcount
+        if n:
+            audit("esi_edit_clear", {"emp": eid, "month": month})
+        flash(f"ESI for {emp['name']} {month} back to the calculated amount" if n else "Enter the ESI amount to deduct",
+              "ok" if n else "error")
+        return redirect(back)
+    try:
+        amount = parse_amount(f["amount"])
+    except ValueError as e:
+        flash(f"Not saved: {e}", "error")
+        return redirect(back)
+    if amount < 0:
+        flash("Not saved: ESI cannot be negative", "error")
+        return redirect(back)
+    reason = (f.get("reason") or "").strip() or "manual edit"
+    rows = [r for r in payroll.compute_month(g.conn, month, employee_ids={eid})]
+    calc = rows[0]["pay"].get("esi_calc", rows[0]["pay"]["esi"]) if rows else None
+    g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET amount=excluded.amount, reason=excluded.reason,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, amount, reason, g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+    audit("esi_edit", {"emp": eid, "month": month, "calculated": calc, "edited": amount, "reason": reason})
+    flash(f"ESI for {emp['name']} {month}: {amount:g} deducted instead of the calculated {calc:g}" if calc is not None
+          else f"ESI for {emp['name']} {month} set to {amount:g}", "ok")
+    return redirect(back)
+
+
 @app.route("/employees/<int:eid>/bank_paid", methods=["POST"])
 @pay_required
 def bank_paid(eid):
@@ -2088,6 +2127,8 @@ def esi_report():
     """Monthly ESI contribution statement (employee 0.75% + employer 3.25% on wages u/s 2(88))."""
     month = cur_month()
     covered, out = esi_rows(month)
+    for r in covered:   # the statement shows the contribution worked out on the wages; a hand-edited deduction is marked
+        r["pay"] = dict(r["pay"], esi_deducted=r["pay"]["esi"], esi=r["pay"].get("esi_calc", r["pay"]["esi"]))
     tot = {k: sum(r["pay"].get(k, 0) for r in covered) for k in ("esi_wages", "esi", "esi_employer")}
     y, m = map(int, month.split("-"))
     due = dt.date(y + (m == 12), 1 if m == 12 else m + 1, 15)

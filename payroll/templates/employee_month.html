@@ -192,12 +192,85 @@
     <tr><td>OT ({{ p.ot_hours }} h){% if p.category == 'staff' %} <span class="small muted">staff: {{ fmt_min(s.ot_min) }} worked, not paid</span>{% endif %}</td><td class="n">{{ p.ot_pay|money }}</td></tr>
     <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
     <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
-    <tr><td>PF / ESI</td><td class="n">{{ p.pf|money }} / {{ p.esi|money }}</td></tr>
+    <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>PF / ESI{% if p.get('esi_edited') %} <span class="badge warn" title="{{ p.esi_edit_reason }} - {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}">ESI edited</span>{% endif %}</td>
+      <td class="n">{{ p.pf|money }} / {{ p.esi|money }}{% if p.get('esi_edited') %} <span class="small muted">(calc. {{ p.esi_calc|money }})</span>{% endif %}</td></tr>
+    <tr class="noprint"><td colspan="2" style="padding-top:6px">
+      <button type="button" class="light small" onclick="var x = document.getElementById('esi-calc'); x.hidden = !x.hidden">ESI calculator</button>
+      <button type="button" class="light small" onclick="var x = document.getElementById('esi-edit'); x.hidden = !x.hidden">Edit ESI deduction</button></td></tr>
     <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
     <tr><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
     <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
     <tr><td>Paid in cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
   </table>
+  {% set ex_parts = p.get('hra', 0) + p.get('conveyance', 0) %}
+  {% set total_rem = p.basic + p.ot_pay + p.allowance + p.bonus %}
+  {% set excluded = p.ot_pay + ex_parts %}
+  {% set addback = [0, excluded - total_rem / 2]|max %}
+  <div class="card grow noprint esi-calc" id="esi-calc" hidden style="background:#f8fafc;min-width:300px"
+       data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
+       data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
+       data-basic="{{ p.basic }}" data-allow="{{ p.allowance + p.bonus }}">
+    <b>ESI wages - how {{ month }} is worked out</b>
+    <table style="margin-top:4px">
+      <tr><td>Salary earned (incl. HRA / conveyance)</td><td class="n">{{ p.basic|money }}</td></tr>
+      <tr><td>Overtime pay</td><td class="n">{{ p.ot_pay|money }}</td></tr>
+      {% if p.allowance or p.bonus %}<tr><td>Allowance + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>{% endif %}
+      <tr><th>Total remuneration</th><th class="n">{{ total_rem|money }}</th></tr>
+      <tr><td>Excluded: overtime{{ ' + HRA + conveyance' if ex_parts }}</td><td class="n">− {{ excluded|money }}</td></tr>
+      <tr class="{{ 'edited' if addback }}"><td>Added back: excluded above half of total ({{ (total_rem / 2)|money }})</td><td class="n">+ {{ addback|money }}</td></tr>
+      <tr><th>ESI wages</th><th class="n">{{ p.esi_wages|money }}</th></tr>
+      <tr><td>Wage limit</td><td class="n">{{ ((settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000)|money }}</td></tr>
+      <tr><td>Covered this month</td><td class="n">{{ 'yes' if p.esi_covered else 'no' }}</td></tr>
+      <tr><td>Employee {{ settings.esi_rate or 0.75 }}% / employer {{ settings.esi_employer_rate or 3.25 }}% (rounded up)</td>
+        <td class="n">{{ p.get('esi_calc', p.esi)|money }} / {{ p.esi_employer|money }}</td></tr>
+      {% if p.esi_note %}<tr><td colspan="2" class="small muted">{{ p.esi_note }}</td></tr>{% endif %}
+    </table>
+    <div class="small" style="margin-top:8px"><b>What if</b> <span class="muted">(nothing is saved)</span></div>
+    <div class="row" style="align-items:flex-end;margin-top:2px">
+      <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" style="width:90px" value="{{ p.ot_pay|amt }}"></div>
+      <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" style="width:90px" value="{{ ex_parts|amt }}"></div>
+    </div>
+    <div class="small" id="wi-out" style="margin-top:4px"></div>
+    <p class="small muted" style="margin:4px 0 0">Coverage is decided in the first month of each contribution period (Apr / Oct) and continues to its end.</p>
+  </div>
+  {% if can_pay %}
+  <form method="post" action="{{ url_for('esi_edit', eid=emp.id) }}" class="card grow noprint" id="esi-edit" {{ 'hidden' if not p.get('esi_edited') }} style="background:#fffbea">{{ csrf_field() }}
+    <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+    <b>Employee ESI deduction for {{ month }}</b>
+    <table style="margin-top:4px">
+      <tr><td>Calculated</td><td class="n">{{ p.get('esi_calc', p.esi)|money }}</td></tr>
+      <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>Edited</td><td class="n">{{ p.esi|money if p.get('esi_edited') else '—' }}</td></tr>
+      {% if p.get('esi_edited') %}<tr><td colspan="2" class="small muted">{{ p.esi_edit_reason }} · {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}</td></tr>{% endif %}
+    </table>
+    {% if not locked %}
+    <div class="row" style="align-items:flex-end;margin-top:6px">
+      <div><label>Deduct ({{ cur }})</label><input name="amount" inputmode="decimal" style="width:90px" value="{{ p.esi|amt if p.get('esi_edited') else '' }}" placeholder="{{ p.get('esi_calc', p.esi)|amt }}"></div>
+      <div class="grow"><label>Reason</label><input name="reason" style="width:100%" value="{{ p.esi_edit_reason if p.get('esi_edited') else '' }}" placeholder="e.g. correction for last month"></div>
+      <button class="small">Save</button>
+      {% if p.get('esi_edited') %}<button class="light small" name="action" value="clear">Use calculated</button>{% endif %}
+    </div>
+    <p class="small muted" style="margin:4px 0 0">Changes only the amount deducted from this employee's pay. ESI wages, the employer share and the ESI report / ESIC file stay as calculated; the ESI report marks the edit.</p>
+    {% endif %}
+  </form>
+  {% endif %}
+  <script>
+  (function () {
+    var box = document.getElementById('esi-calc'); if (!box) return;
+    var num = function (v) { v = parseFloat(String(v).replace(/[^0-9.\-]/g, '')); return isNaN(v) ? 0 : v; };
+    var fmt = function (v) { return v.toLocaleString('en-IN', {maximumFractionDigits: 2}); };
+    function run() {
+      var ot = num(document.getElementById('wi-ot').value), ex = num(document.getElementById('wi-ex').value);
+      var total = num(box.dataset.basic) + ot + num(box.dataset.allow), excl = ot + ex;
+      var wages = total - excl + Math.max(0, excl - total / 2), lim = num(box.dataset.ceiling);
+      var emp = Math.ceil(wages * num(box.dataset.rate) / 100), er = Math.ceil(wages * num(box.dataset.er) / 100);
+      document.getElementById('wi-out').innerHTML = 'ESI wages <b>' + fmt(wages) + '</b> - ' +
+        (wages <= lim ? 'within the limit: employee <b>' + fmt(emp) + '</b>, employer <b>' + fmt(er) + '</b>'
+                      : '<span style="color:var(--bad)">above the ' + fmt(lim) + ' limit: not covered (unless already covered this period)</span>');
+    }
+    box.querySelectorAll('input.wi').forEach(function (i) { i.addEventListener('input', run); });
+    run();
+  })();
+  </script>
   <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
     <input type="hidden" name="back" value="{{ request.full_path }}#salary">
     <b>Edit salary</b>

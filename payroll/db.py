@@ -90,6 +90,11 @@ CREATE TABLE IF NOT EXISTS cash_payments (  -- cash actually handed over (may di
     month TEXT NOT NULL, paid_amount REAL NOT NULL, note TEXT DEFAULT '', carried_month TEXT,
     created_by TEXT, created_at TEXT, UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS esi_overrides (     -- employee ESI deduction entered by hand for a month (calculated kept)
+    id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    month TEXT NOT NULL, amount REAL NOT NULL, reason TEXT DEFAULT '', created_by TEXT, created_at TEXT,
+    UNIQUE(employee_id, month));
+
 CREATE TABLE IF NOT EXISTS employee_groups (   -- saved selections of employees (kept across months)
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_by TEXT, created_at TEXT);
 

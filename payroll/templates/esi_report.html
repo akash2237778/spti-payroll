@@ -25,7 +25,7 @@ average daily wage is ≤ {{ cur }}{{ settings.esi_low_wage_daily }}. <b>Pay by 
     <td>{% if r.emp.esi_no %}{{ r.emp.esi_no }}{% else %}<span class="badge bad">missing</span>{% endif %}</td>
     <td class="n">{{ r.summary.payable_days|days }}</td><td class="n">{{ p.gross|money }}</td><td class="n">{{ p.ot_pay|money }}</td>
     <td class="n"><b>{{ p.esi_wages|money }}</b></td><td class="n">{{ p.esi|money }}</td><td class="n">{{ p.esi_employer|money }}</td>
-    <td class="n">{{ (p.esi + p.esi_employer)|money }}</td><td class="small">{{ p.esi_note }}</td></tr>
+    <td class="n">{{ (p.esi + p.esi_employer)|money }}</td><td class="small">{{ p.esi_note }}{% if p.get('esi_edited') %} <span class="badge warn">deducted from pay by hand: {{ p.esi_deducted|money }}</span>{% endif %}</td></tr>
   {% else %}<tr><td colspan="11" class="muted">No ESI-covered employees in {{ month }}{{ ' - salaries are not entered yet' if not covered and not out }}.</td></tr>{% endfor %}
   {% if covered %}<tr><th colspan="6">Total</th><th class="n">{{ tot.esi_wages|money }}</th><th class="n">{{ tot.esi|money }}</th>
     <th class="n">{{ tot.esi_employer|money }}</th><th class="n">{{ (tot.esi + tot.esi_employer)|money }}</th><th></th></tr>{% endif %}

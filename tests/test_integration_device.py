@@ -674,6 +674,29 @@ def test_end_to_end(client):
     r = post(c, "/attendance/pdf", month="2026-09") if False else c.get("/attendance/pdf?month=2026-09&download=1", follow_redirects=True)
     assert "Tick at least one employee" in r.get_data(as_text=True)
 
+    # ---- ESI calculator panel + hand-edited ESI deduction
+    with db.tx() as conn:
+        conn.execute("UPDATE employees SET esi_enabled=1, salary_rate=18000, salary_type='monthly' WHERE id=?", (sep_emp,))
+    def pay_of(eid, m="2026-09"):
+        with db.tx() as conn:
+            return payroll.compute_month(conn, m, employee_ids={eid})[0]["pay"]
+    p0 = pay_of(sep_emp)
+    assert p0["esi_covered"] and p0["esi"] > 0 and p0["esi_calc"] == p0["esi"] and not p0["esi_edited"]
+    page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert 'id="esi-calc" hidden' in page and "ESI calculator" in page and 'id="esi-edit"' in page
+    r = post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="50", reason="adjusted")
+    assert "deducted instead of the calculated" in r.get_data(as_text=True)
+    p1 = pay_of(sep_emp)
+    assert p1["esi"] == 50 and p1["esi_calc"] == p0["esi"] and p1["esi_edited"] and p1["esi_edit_reason"] == "adjusted"
+    assert p1["esi_employer"] == p0["esi_employer"] and p1["esi_wages"] == p0["esi_wages"]
+    assert p1["net"] == p0["net"] + round(p0["esi"] - 50)
+    rep = c.get("/reports/esi?month=2026-09").get_data(as_text=True)
+    assert "deducted from pay by hand" in rep
+    assert "cannot be negative" in post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="-5").get_data(as_text=True)
+    assert pay_of(sep_emp)["esi"] == 50                       # negative refused
+    post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", action="clear")
+    assert not pay_of(sep_emp)["esi_edited"] and pay_of(sep_emp)["esi"] == p0["esi"]
+
     # ---- employee groups for the attendance PDF (kept across months)
     r = post(c, "/attendance/groups", month="2026-09", action="new", group_name="Night staff", eid=[str(prem), str(sep_emp)])
     assert "Group 'Night staff' saved with 2 employee(s)" in r.get_data(as_text=True).replace('&#39;', "'")

@@ -123,7 +123,7 @@ def esi_contribution(emp, settings, *, basic, ot_pay, allowance=0.0, bonus=0.0, 
     return out
 
 
-def calculate(emp, summary, month, settings, adjustments=(), bank_override=None, esi_covered=None):
+def calculate(emp, summary, month, settings, adjustments=(), bank_override=None, esi_covered=None, esi_override=None):
     """Pure salary calculation for one employee-month. Returns a dict of line items."""
     y, m = map(int, month.split("-"))
     cal_days = calendar.monthrange(y, m)[1]
@@ -172,7 +172,9 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None,
     esi_info = esi_contribution(emp, settings, basic=basic, ot_pay=ot_pay, allowance=earn_adj["allowance"],
                                 bonus=earn_adj["bonus"], payable_days=payable, covered=esi_covered,
                                 excluded_parts=parts["hra"] + parts["conveyance"])
-    esi = esi_info["esi"]
+    esi = esi_calc = esi_info["esi"]
+    if esi_override is not None:   # employee ESI deduction entered by hand for this month
+        esi = float(esi_override["amount"])
 
     total_ded = pf + esi + sum(ded_adj.values())
     net = gross - total_ded
@@ -192,7 +194,18 @@ def calculate(emp, summary, month, settings, adjustments=(), bank_override=None,
         "bank_override": bank_override is not None,
         "esi_wages": esi_info["esi_wages"], "esi_employer": esi_info["esi_employer"],
         "esi_covered": esi_info["esi_covered"], "esi_note": esi_info["esi_note"],
+        "esi_calc": r2(esi_calc), "esi_edited": esi_override is not None,
+        "esi_edit_reason": (esi_override or {}).get("reason", ""), "esi_edit_by": (esi_override or {}).get("created_by", ""),
+        "esi_edit_at": (esi_override or {}).get("created_at", ""),
     }
+
+
+def esi_overrides(conn, month):
+    """{employee_id: row} of ESI deductions entered by hand for the month."""
+    try:
+        return {r["employee_id"]: dict(r) for r in conn.execute("SELECT * FROM esi_overrides WHERE month = ?", (month,))}
+    except Exception:   # older database without the table
+        return {}
 
 
 def compute_month(conn, month, employee_ids=None, settings=None, today=None, _esi_cache=None):
@@ -212,6 +225,7 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None, _es
     for a in conn.execute("SELECT * FROM adjustments WHERE month = ?", (month,)):
         adjs.setdefault(a["employee_id"], []).append(dict(a))
     overrides = month_overrides(conn, month)
+    esi_ovr = esi_overrides(conn, month)
     splits = {r["employee_id"]: r["bank_amount"] for r in conn.execute("SELECT * FROM pay_splits WHERE month = ?", (month,))}
     rows = []
     for e in emps:
@@ -220,10 +234,11 @@ def compute_month(conn, month, employee_ids=None, settings=None, today=None, _es
         apply_month_override(summary, overrides.get(e["id"]))
         if not e["active"] and summary["worked_min"] == 0 and not adjs.get(e["id"]):
             continue
-        pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]))
+        pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]), esi_override=esi_ovr.get(e["id"]))
         if (not pay["esi_covered"] and esi_applicable(e, settings) and pay["esi_wages"] > 0
                 and esi_covered_earlier_in_period(conn, e["id"], month, settings, _esi_cache)):
-            pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]), esi_covered=True)
+            pay = calculate(e, summary, month, settings, adjs.get(e["id"], []), splits.get(e["id"]), esi_covered=True,
+                            esi_override=esi_ovr.get(e["id"]))
         rows.append({"emp": e, "days": d["days"], "shift": d["shift"], "summary": summary, "pay": pay})
     return rows
 
