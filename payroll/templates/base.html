@@ -46,4 +46,31 @@
   {% endif %}{% endwith %}
   {% block body %}{% endblock %}
 </main>
+<script>
+/* Keep the reader's place after saving: remember the scroll position (page + scrolling tables) when a form is posted
+   and go back to it when the same page reloads, instead of jumping to the top or to a #section. */
+(function () {
+  var KEY = 'spti-scroll';
+  function boxes() { return Array.prototype.slice.call(document.querySelectorAll('.scroll, .roster-wrap')); }
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (e.defaultPrevented || (f.method || '').toLowerCase() !== 'post' || (f.target && f.target !== '_self')) return;
+    try {
+      sessionStorage.setItem(KEY, JSON.stringify({ path: location.pathname, x: window.scrollX, y: window.scrollY,
+        inner: boxes().map(function (b) { return [b.scrollLeft, b.scrollTop]; }), t: Date.now() }));
+    } catch (err) {}
+  });
+  var saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); sessionStorage.removeItem(KEY); } catch (err) {}
+  if (!saved || saved.path !== location.pathname || Date.now() - saved.t > 30000) return;
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+  function restore() {
+    boxes().forEach(function (b, i) { var v = saved.inner[i]; if (v) { b.scrollLeft = v[0]; b.scrollTop = v[1]; } });
+    window.scrollTo(saved.x, saved.y);
+  }
+  restore();
+  window.addEventListener('load', function () { restore(); requestAnimationFrame(restore); });
+  if (location.hash) history.replaceState(null, '', location.pathname + location.search);   // no jump to #section
+})();
+</script>
 </body></html>
