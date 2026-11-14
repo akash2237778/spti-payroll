@@ -3,19 +3,29 @@
 {% block page_class %}print-landscape{% endblock %}
 {% block body %}
 {% set s = row.summary %}{% set p = row.pay %}
-<h1>{{ emp.name }} {% if emp.category == 'staff' %}<span class="badge">Staff</span>{% endif %} <span class="muted small">#{{ emp.device_user_id }} · {{ row.shift.name }} {{ row.shift.start_time }}-{{ row.shift.end_time }}</span>
-  <a class="btn small noprint" href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">⇄ Change shift</a>
-  <a class="btn light small noprint" href="{{ url_for('attendance_report', month=month, eid=emp.id) }}" target="_blank">🖨 Print statement</a>
-  {% if can_pay %}<a class="btn light small noprint" href="{{ url_for('export_formula_xlsx', month=month, eid=emp.id) }}">Excel with formulas</a>{% endif %}
-  {{ monthnav('att_employee', month, prev, nxt, eid=emp.id) }}
-  <form class="inline noprint"><input type="hidden" name="month" value="{{ month }}">
-    <select onchange="location='{{ url_for('att_employee', eid=0) }}'.replace('/0', '/' + this.value) + '?month={{ month }}'">
-      {% for o in others %}<option value="{{ o.id }}" {{ 'selected' if o.id == emp.id }}>{{ o.device_user_id }} · {{ o.name }}</option>{% endfor %}</select></form>
-  {% if locked %}<span class="badge bad">payroll finalized - locked</span>{% endif %}
-</h1>
+<div class="emp-head">
+  <div class="emp-title">
+    <h1>{{ emp.name }} {% if emp.category == 'staff' %}<span class="badge">Staff</span>{% endif %}
+      {% if locked %}<span class="badge bad">payroll finalized - locked</span>{% endif %}</h1>
+    <div class="emp-meta">ID {{ emp.device_user_id }}{% if emp.department %} · {{ emp.department }}{% endif %}
+      · {{ row.shift.name }} shift {{ row.shift.start_time }}–{{ row.shift.end_time }}</div>
+  </div>
+  <div class="emp-nav noprint">
+    {{ monthnav('att_employee', month, prev, nxt, eid=emp.id) }}
+    <select class="emp-pick" aria-label="Employee" onchange="location='{{ url_for('att_employee', eid=0) }}'.replace('/0', '/' + this.value) + '?month={{ month }}'">
+      {% for o in others %}<option value="{{ o.id }}" {{ 'selected' if o.id == emp.id }}>{{ o.device_user_id }} · {{ o.name }}</option>{% endfor %}</select>
+  </div>
+</div>
+<div class="emp-actions noprint">
+  <a class="btn small" href="#shift-panel" onclick="document.getElementById('shift-panel').open = true">⇄ Change shift</a>
+  <a class="btn light small" href="{{ url_for('attendance_report', month=month, eid=emp.id) }}" target="_blank">🖨 Print statement</a>
+  {% if can_pay %}<a class="btn light small" href="{{ url_for('export_formula_xlsx', month=month, eid=emp.id) }}">Excel with formulas</a>{% endif %}
+  <a class="btn light small" href="{{ url_for('attendance_pdf_view', month=month, eid=emp.id) }}">Attendance PDF</a>
+</div>
 {% set panel_month = month %}{% set panel_from = none %}{% set panel_to = none %}{% set panel_open = false %}
 {% include "_shift_panel.html" %}
-<div class="stats">
+{% set ed = s.get('edited', {}) %}
+<div class="stats emp-stats">
   <div class="stat ok"><span>Present</span><b>{{ s.get('cnt_P',0)|days }}</b></div>
   <div class="stat"><span>Half days</span><b>{{ s.get('cnt_HD',0)|days }}</b></div>
   <div class="stat bad"><span>Absent</span><b>{{ s.get('cnt_A',0)|days }}</b></div>
@@ -23,24 +33,24 @@
   <div class="stat warn"><span>Missing punch</span><b>{{ s.get('cnt_MP',0)|days }}</b></div>
   <div class="stat warn"><span>Late marks</span><b>{{ s.get('late_count',0)|days }}</b></div>
   <div class="stat"><span>Hours worked</span><b>{{ fmt_min(s.worked_min) }}</b></div>
-  {% set ed = s.get('edited', {}) %}
   <div class="stat {{ 'edited' if ed.ot_min }}"><span>OT hours{{ ' · edited' if ed.ot_min }}</span><b>{{ fmt_min(s.ot_min) }}</b>
     {% if ed.ot_min %}<small class="muted">calculated <s>{{ fmt_min(s.calc_ot_min) }}</s></small>{% endif %}</div>
   <div class="stat ok {{ 'edited' if ed.payable_days }}"><span>Payable days{{ ' · edited' if ed.payable_days }}</span><b>{{ s.payable_days|days }}</b>
     {% if ed.payable_days %}<small class="muted">calculated <s>{{ s.calc_payable_days|days }}</s></small>{% endif %}</div>
-  {% if can_pay %}<div class="stat ok"><span>Net pay</span><b>{{ cur }}{{ p.net|money }}</b></div>{% endif %}
+  {% if can_pay %}<div class="stat ok money"><span>Net pay</span><b>{{ cur }}{{ p.net|money }}</b></div>{% endif %}
 </div>
-{{ legend() }}
 {% set can_pen = can_edit and not locked %}
-{% if can_pen and s.get('late_count') %}
-<div class="toolbar noprint" style="margin:8px 0 0">
-  <span class="small"><b>Late penalty:</b> {{ s.get('late_count',0)|days }} late day(s); {{ s.get('late_penalty_days',0)|days }} penalized,
-    {{ fmt_min(s.get('late_penalty_min',0)) }} OT removed. Choose per day in the "Late penalty" column, or:</span>
-  <form method="post" action="{{ url_for('late_penalty', eid=emp.id) }}">{{ csrf_field() }}<input type="hidden" name="month" value="{{ month }}">
-    <input type="hidden" name="back" value="{{ request.full_path }}"><button class="light small" name="action" value="all">Penalize all late days (suggested minutes)</button>
-    <button class="light small" name="action" value="clear_all" onclick="return confirm('Remove all late penalties this month?')">Clear all</button></form>
+<div class="table-bar noprint">
+  <details class="legend-toggle"><summary class="small">Status colours</summary>{{ legend() }}</details>
+  {% if can_pen and s.get('late_count') %}
+  <div class="late-bar small"><b>Late penalty:</b> {{ s.get('late_count',0)|days }} late day(s), {{ s.get('late_penalty_days',0)|days }} penalized,
+    {{ fmt_min(s.get('late_penalty_min',0)) }} OT removed.
+    <form method="post" action="{{ url_for('late_penalty', eid=emp.id) }}" class="inline">{{ csrf_field() }}<input type="hidden" name="month" value="{{ month }}">
+      <input type="hidden" name="back" value="{{ request.full_path }}"><button class="light small" name="action" value="all">Penalize all late days</button>
+      <button class="light small" name="action" value="clear_all" onclick="return confirm('Remove all late penalties this month?')">Clear all</button></form>
+  </div>
+  {% endif %}
 </div>
-{% endif %}
 <div class="scroll" style="margin-top:8px"><table>
 <thead>  <tr><th>Date</th><th>Day</th><th>Shift</th><th>Status</th><th>In</th><th>Out</th><th class="n">Worked</th><th class="n">Late</th><th class="n">Early out</th><th class="n">OT</th><th class="n" title="OT minutes taken off for coming late - chosen day by day">Late penalty</th><th class="n" title="Left early but given a full day: minutes taken off overtime">Short (OT −)</th><th class="n" title="Payable days this day contributes: worked + extra + paid weekly off / holiday / leave">Day credit</th><th>All punches</th><th>Notes</th><th></th></tr></thead>
   {% for d in row.days %}
@@ -151,112 +161,157 @@
     <th colspan="3" class="small muted">OT paid {{ fmt_min(s.ot_min) }}</th></tr>
 </table></div>
 {% set ed = s.get('edited', {}) %}
-<div class="card final-totals {{ 'has-edit' if ed }}" id="final-totals" style="margin-top:14px">
-  <h2 style="margin-top:0">Final totals {% if ed %}<span class="badge warn">edited by {{ s.edit_by }} {{ (s.edit_at or '')[:16] }}</span>{% endif %}</h2>
-  <form method="post" action="{{ url_for('month_totals', eid=emp.id) }}">{{ csrf_field() }}
+<section class="card final-totals {{ 'has-edit' if ed }}" id="final-totals">
+  <div class="sec-head"><h2>Final totals</h2>
+    {% if ed %}<span class="badge warn">edited by {{ s.edit_by }} {{ (s.edit_at or '')[:16] }}</span>{% endif %}</div>
+  <form method="post" action="{{ url_for('month_totals', eid=emp.id) }}" class="ft-grid">{{ csrf_field() }}
     <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#final-totals">
-    <table style="max-width:760px">
+    <table class="ft-table">
       <tr><th></th><th class="n">Calculated</th><th>Edited</th><th class="n">Used for pay</th></tr>
       <tr class="{{ 'edited' if ed.payable_days }}"><td><b>Payable days</b></td><td class="n">{{ s.calc_payable_days|days }}</td>
-        <td>{% if can_edit and not locked %}<input name="payable_days" type="number" step="any" min="0" max="31" style="width:90px"
+        <td>{% if can_edit and not locked %}<input name="payable_days" type="number" step="any" min="0" max="31" class="in-num"
               value="{{ (s.payable_days|days) if ed.payable_days else '' }}" placeholder="{{ s.calc_payable_days|days }}">
             {% elif ed.payable_days %}{{ s.payable_days|days }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="n"><b>{{ s.payable_days|days }}</b>{% if ed.payable_days %} <span class="small">({{ '%+g'|format(s.payable_days - s.calc_payable_days) }})</span>{% endif %}</td></tr>
       <tr class="{{ 'edited' if ed.ot_min }}"><td><b>Overtime (h:mm)</b></td><td class="n">{{ fmt_min(s.calc_ot_min) }}</td>
-        <td>{% if can_edit and not locked %}<input name="ot_hours" style="width:90px" value="{{ fmt_min(s.ot_min) if ed.ot_min else '' }}"
+        <td>{% if can_edit and not locked %}<input name="ot_hours" class="in-num" value="{{ fmt_min(s.ot_min) if ed.ot_min else '' }}"
               placeholder="{{ fmt_min(s.calc_ot_min) }}" title="95:30 or 95.5">
             {% elif ed.ot_min %}{{ fmt_min(s.ot_min) }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="n"><b>{{ fmt_min(s.ot_min) }}</b>{% if ed.ot_min %} <span class="small">({{ '+' if s.ot_min >= s.calc_ot_min else '−' }}{{ fmt_min((s.ot_min - s.calc_ot_min)|abs) }})</span>{% endif %}</td></tr>
     </table>
-    {% if ed %}<p class="small" style="margin:6px 0"><b>Reason:</b> {{ s.edit_reason }}</p>{% endif %}
-    {% if can_edit and not locked %}
-    <div class="row" style="margin-top:8px;align-items:flex-end">
-      <div class="grow"><label>Reason (optional)</label><input name="reason" style="width:100%" value="{{ s.edit_reason if ed else '' }}" placeholder="e.g. approved by manager"></div>
-      <button>Save final totals</button>
-      {% if ed %}<button class="light" name="action" value="reset" formnovalidate onclick="return confirm('Go back to the calculated values?')">Use calculated</button>{% endif %}
+    <div class="ft-side">
+      {% if ed %}<p class="small" style="margin:0 0 8px"><b>Reason:</b> {{ s.edit_reason }}</p>{% endif %}
+      {% if can_edit and not locked %}
+      <label>Reason (optional)</label><input name="reason" class="in-full" value="{{ s.edit_reason if ed else '' }}" placeholder="e.g. approved by manager">
+      <div class="actions"><button>Save final totals</button>
+        {% if ed %}<button class="light" name="action" value="reset" formnovalidate onclick="return confirm('Go back to the calculated values?')">Use calculated</button>{% endif %}</div>
+      <p class="hint">Leave a box empty to keep the calculated value. Edited totals are used for salary, payslips, statements and Excel.</p>
+      {% endif %}
     </div>
-    <p class="small muted" style="margin:4px 0 0">Leave a box empty to keep the calculated value. Edited totals are used for salary, payslips, statements and Excel.</p>
-    {% endif %}
   </form>
-</div>
+</section>
+
 {% if can_pay %}
-<div class="card" style="margin-top:14px" id="salary">
-  <h2 style="margin-top:0">Salary {{ '· Staff' if p.category == 'staff' }} ({{ p.salary_type }} @ {{ cur }}{{ p.rate|money }})</h2>
-  <div class="row" style="align-items:flex-start">
-  <table style="max-width:520px" class="grow">
-    <tr class="{{ 'edited' if s.get('edited', {}).payable_days }}"><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
-    <tr><td>Per day / per hour</td><td class="n">{{ cur }}{{ p.per_day|money }} / {{ cur }}{{ p.hour_rate|money }}</td></tr>
-    <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td></tr>
-    {% if p.get('components') %}<tr><td class="small muted" colspan="2" style="padding-left:18px">Basic + DA {{ p.basic_da|money }} · HRA {{ p.hra|money }} · Conveyance {{ p.conveyance|money }} · Other {{ p.other_allowance|money }}</td></tr>{% endif %}
-    <tr><td>ESI wages <span class="small muted">(for ESI)</span></td><td class="n">{{ p.get('esi_wages', 0)|money }}</td></tr>
-    <tr><td>OT ({{ p.ot_hours }} h){% if p.category == 'staff' %} <span class="small muted">staff: {{ fmt_min(s.ot_min) }} worked, not paid</span>{% endif %}</td><td class="n">{{ p.ot_pay|money }}</td></tr>
-    <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
-    <tr><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
-    <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>PF / ESI{% if p.get('esi_edited') %} <span class="badge warn" title="{{ p.esi_edit_reason }} - {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}">ESI edited</span>{% endif %}</td>
-      <td class="n">{{ p.pf|money }} / {{ p.esi|money }}{% if p.get('esi_edited') %} <span class="small muted">(calc. {{ p.esi_calc|money }})</span>{% endif %}</td></tr>
-    <tr class="noprint"><td colspan="2" style="padding-top:6px">
-      <button type="button" class="light small" onclick="var x = document.getElementById('esi-calc'); x.hidden = !x.hidden">ESI calculator</button>
-      <button type="button" class="light small" onclick="var x = document.getElementById('esi-edit'); x.hidden = !x.hidden">Edit ESI deduction</button></td></tr>
-    <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
-    <tr><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
-    <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
-    <tr><td>Paid in cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
-  </table>
+<section class="card" id="salary">
+  <div class="sec-head"><h2>Salary <span class="muted small">{{ 'Staff · ' if p.category == 'staff' }}{{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</span></h2>
+    <div class="sec-tools noprint">
+      <button type="button" class="light small" onclick="var x = document.getElementById('esi-calc'); x.hidden = !x.hidden; if (!x.hidden) x.scrollIntoView({block: 'nearest'})">ESI calculator</button>
+      <button type="button" class="light small" onclick="var x = document.getElementById('esi-edit'); x.hidden = !x.hidden; if (!x.hidden) x.scrollIntoView({block: 'nearest'})">Edit ESI deduction</button>
+    </div></div>
+  {% if not p.rate %}<p class="flash error" style="margin:0 0 12px">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
+
+  <div class="pane-grid two">
+    <div class="sub">
+      <h3>Pay for {{ month }}</h3>
+      <table class="kv">
+        <tr class="{{ 'edited' if ed.payable_days }}"><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
+        <tr><td>Per day / per hour</td><td class="n">{{ cur }}{{ p.per_day|money }} / {{ cur }}{{ p.hour_rate|money }}</td></tr>
+        <tr><td>Basic earned</td><td class="n">{{ p.basic|money }}</td></tr>
+        {% if p.get('components') %}<tr><td class="small muted" colspan="2" style="padding-left:16px">Basic + DA {{ p.basic_da|money }} · HRA {{ p.hra|money }} · Conveyance {{ p.conveyance|money }} · Other {{ p.other_allowance|money }}</td></tr>{% endif %}
+        <tr><td>OT ({{ p.ot_hours }} h){% if p.category == 'staff' %} <span class="small muted">staff: {{ fmt_min(s.ot_min) }} worked, not paid</span>{% endif %}</td><td class="n">{{ p.ot_pay|money }}</td></tr>
+        <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
+        <tr class="total"><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
+        <tr><td>ESI wages <span class="small muted">(for ESI)</span></td><td class="n">{{ p.get('esi_wages', 0)|money }}</td></tr>
+        <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>PF / ESI{% if p.get('esi_edited') %} <span class="badge warn" title="{{ p.esi_edit_reason }} - {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}">ESI edited</span>{% endif %}</td>
+          <td class="n">{{ p.pf|money }} / {{ p.esi|money }}{% if p.get('esi_edited') %} <span class="small muted">(calc. {{ p.esi_calc|money }})</span>{% endif %}</td></tr>
+        <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
+        <tr class="total grand"><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
+        <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
+        <tr><td>Paid in cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
+      </table>
+    </div>
+
+    <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="sub noprint">{{ csrf_field() }}
+      <input type="hidden" name="back" value="{{ request.full_path }}#salary">
+      <h3>Edit salary</h3>
+      <div class="fgrid">
+        <div><label>Category</label><select name="category">
+          <option value="worker" {{ 'selected' if (emp.category or 'worker') == 'worker' }}>Worker – overtime paid</option>
+          <option value="staff" {{ 'selected' if emp.category == 'staff' }}>Staff – payable days only, no OT</option></select></div>
+        <div><label>Salary type</label><select name="salary_type">
+          {% for k, l in [('monthly','Monthly'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == emp.salary_type }}>{{ l }}</option>{% endfor %}</select></div>
+        <div><label>Rate ({{ cur }})</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ emp.salary_rate or 0 }}" required></div>
+        <div><label>OT multiplier</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ emp.ot_multiplier or 1 }}"></div>
+        <div><label>Salary paid (default)</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (emp.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>
+        <div><label>Bank amount ({{ cur }}) or %</label><input name="bank_value" type="number" step="0.01" min="0" value="{{ emp.bank_value or 0 }}"></div>
+      </div>
+      <div class="checks">
+        <label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if emp.ot_enabled }}> OT eligible</label>
+        <label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if emp.pf_enabled }}> PF</label>
+        <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if emp.esi_enabled }}> ESI</label>
+      </div>
+      {% set src = emp %}{% set rate_name = 'salary_rate' %}{% include "_components.html" %}
+      <div class="actions"><button>Save salary</button></div>
+      <p class="hint">Saved on the employee's profile: applies to every month whose payroll is not finalized{{ ' (this month is finalized, so it keeps its frozen amounts)' if locked }}.</p>
+    </form>
+  </div>
+
   {% set ex_parts = p.get('hra', 0) + p.get('conveyance', 0) %}
   {% set total_rem = p.basic + p.ot_pay + p.allowance + p.bonus %}
   {% set excluded = p.ot_pay + ex_parts %}
   {% set addback = [0, excluded - total_rem / 2]|max %}
-  <div class="card grow noprint esi-calc" id="esi-calc" hidden style="background:#f8fafc;min-width:300px"
-       data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
-       data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
-       data-allow="0">
-    <b>ESI wages - how {{ month }} is worked out</b>
-    <table style="margin-top:4px">
-      <tr><td>Salary earned (incl. HRA / conveyance)</td><td class="n">{{ p.basic|money }}</td></tr>
-      <tr><td>Overtime pay</td><td class="n">{{ p.ot_pay|money }}</td></tr>
-      {% if p.allowance or p.bonus %}<tr><td>Allowance + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>{% endif %}
-      <tr><th>Total remuneration</th><th class="n">{{ total_rem|money }}</th></tr>
-      <tr><td>Excluded: overtime{{ ' + HRA + conveyance' if ex_parts }}</td><td class="n">− {{ excluded|money }}</td></tr>
-      <tr class="{{ 'edited' if addback }}"><td>Added back: excluded above half of total ({{ (total_rem / 2)|money }})</td><td class="n">+ {{ addback|money }}</td></tr>
-      <tr><th>ESI wages</th><th class="n">{{ p.esi_wages|money }}</th></tr>
-      <tr><td>Wage limit</td><td class="n">{{ ((settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000)|money }}</td></tr>
-      <tr><td>Covered this month</td><td class="n">{{ 'yes' if p.esi_covered else 'no' }}</td></tr>
-      <tr><td>Employee {{ settings.esi_rate or 0.75 }}% / employer {{ settings.esi_employer_rate or 3.25 }}% (rounded up)</td>
-        <td class="n">{{ p.get('esi_calc', p.esi)|money }} / {{ p.esi_employer|money }}</td></tr>
-      {% if p.esi_note %}<tr><td colspan="2" class="small muted">{{ p.esi_note }}</td></tr>{% endif %}
-    </table>
-    {% set min_wage = (settings.get('min_wage_monthly') or '')|trim %}
-    <div class="small" style="margin-top:8px"><b>What if</b> <span class="muted">(nothing is saved)</span></div>
-    <div class="row" style="align-items:flex-end;margin-top:2px">
-      <div><label>Salary earned</label><input class="wi" id="wi-sal" inputmode="decimal" style="width:95px" value="{{ min_wage if min_wage else (emp.salary_rate or 0)|amt }}"></div>
-      <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" style="width:90px" value="0"></div>
-      <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" style="width:90px" value="0"></div>
-      <button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ min_wage if min_wage else (emp.salary_rate or 0)|amt }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button>
+  {% set min_wage = (settings.get('min_wage_monthly') or '')|trim %}
+  {% set wi_sal = min_wage if min_wage else (emp.salary_rate or 0)|amt %}
+  <div class="pane-grid two esi-panes">
+    <div class="sub noprint esi-calc" id="esi-calc" hidden
+         data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
+         data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
+         data-allow="0">
+      <div class="sub-head"><h3>ESI calculator</h3>
+        <button type="button" class="light small" onclick="document.getElementById('esi-calc').hidden = true" title="Close">✕</button></div>
+      <div class="esi-cols">
+        <div>
+          <div class="small muted" style="margin-bottom:4px">{{ month }} as calculated</div>
+          <table class="kv">
+            <tr><td>Salary earned</td><td class="n">{{ p.basic|money }}</td></tr>
+            <tr><td>Overtime pay</td><td class="n">{{ p.ot_pay|money }}</td></tr>
+            {% if p.allowance or p.bonus %}<tr><td>Allowance + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>{% endif %}
+            <tr class="total"><th>Total remuneration</th><th class="n">{{ total_rem|money }}</th></tr>
+            <tr><td>Excluded: overtime{{ ' + HRA + conveyance' if ex_parts }}</td><td class="n">− {{ excluded|money }}</td></tr>
+            <tr class="{{ 'edited' if addback }}"><td>Added back (above half of total)</td><td class="n">+ {{ addback|money }}</td></tr>
+            <tr class="total"><th>ESI wages</th><th class="n">{{ p.esi_wages|money }}</th></tr>
+            <tr><td>Wage limit</td><td class="n">{{ ((settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000)|money }}</td></tr>
+            <tr><td>Covered this month</td><td class="n">{{ 'yes' if p.esi_covered else 'no' }}</td></tr>
+            <tr><td>Employee {{ settings.esi_rate or 0.75 }}% / employer {{ settings.esi_employer_rate or 3.25 }}%</td>
+              <td class="n">{{ p.get('esi_calc', p.esi)|money }} / {{ p.esi_employer|money }}</td></tr>
+          </table>
+          {% if p.esi_note %}<p class="hint">{{ p.esi_note }}</p>{% endif %}
+        </div>
+        <div class="whatif">
+          <div class="small" style="margin-bottom:4px"><b>What if</b> <span class="muted">· nothing is saved</span></div>
+          <div class="fgrid one">
+            <div><label>Salary earned</label><input class="wi" id="wi-sal" inputmode="decimal" value="{{ wi_sal }}"></div>
+            <div><label>Overtime pay</label><input class="wi" id="wi-ot" inputmode="decimal" value="0"></div>
+            <div><label>HRA + conveyance</label><input class="wi" id="wi-ex" inputmode="decimal" value="0"></div>
+          </div>
+          <div class="wi-out" id="wi-out"></div>
+          <div class="actions"><button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ wi_sal }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button></div>
+          <p class="hint">Salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "the monthly rate - set the legal minimum wage in Settings to start from it" }}.
+            Coverage is decided in the first month of each contribution period (Apr / Oct).</p>
+        </div>
+      </div>
     </div>
-    <div class="small muted">Salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "this employee's monthly rate - set the legal minimum wage in Settings to start from it" }}.</div>
-    <div class="small" id="wi-out" style="margin-top:4px"></div>
-    <p class="small muted" style="margin:4px 0 0">Coverage is decided in the first month of each contribution period (Apr / Oct) and continues to its end.</p>
+
+    <form method="post" action="{{ url_for('esi_edit', eid=emp.id) }}" class="sub noprint esi-edit-box" id="esi-edit" {{ 'hidden' if not p.get('esi_edited') }}>{{ csrf_field() }}
+      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+      <div class="sub-head"><h3>ESI deduction for {{ month }}</h3>
+        <button type="button" class="light small" onclick="document.getElementById('esi-edit').hidden = true" title="Close">✕</button></div>
+      <table class="kv">
+        <tr><td>Calculated</td><td class="n">{{ p.get('esi_calc', p.esi)|money }}</td></tr>
+        <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>Edited</td><td class="n">{{ p.esi|money if p.get('esi_edited') else '—' }}</td></tr>
+        {% if p.get('esi_edited') %}<tr><td colspan="2" class="small muted">{{ p.esi_edit_reason }} · {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}</td></tr>{% endif %}
+      </table>
+      {% if not locked %}
+      <div class="fgrid">
+        <div><label>Deduct ({{ cur }})</label><input name="amount" inputmode="decimal" value="{{ p.esi|amt if p.get('esi_edited') else '' }}" placeholder="{{ p.get('esi_calc', p.esi)|amt }}"></div>
+        <div><label>Reason</label><input name="reason" value="{{ p.esi_edit_reason if p.get('esi_edited') else '' }}" placeholder="e.g. correction"></div>
+      </div>
+      <div class="actions"><button class="small">Save</button>
+        {% if p.get('esi_edited') %}<button class="light small" name="action" value="clear">Use calculated</button>{% endif %}</div>
+      <p class="hint">Changes only the amount deducted from this employee's pay. ESI wages, the employer share and the ESI report / ESIC file stay as calculated; the ESI report marks the edit.</p>
+      {% endif %}
+    </form>
   </div>
-  {% if can_pay %}
-  <form method="post" action="{{ url_for('esi_edit', eid=emp.id) }}" class="card grow noprint" id="esi-edit" {{ 'hidden' if not p.get('esi_edited') }} style="background:#fffbea">{{ csrf_field() }}
-    <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
-    <b>Employee ESI deduction for {{ month }}</b>
-    <table style="margin-top:4px">
-      <tr><td>Calculated</td><td class="n">{{ p.get('esi_calc', p.esi)|money }}</td></tr>
-      <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>Edited</td><td class="n">{{ p.esi|money if p.get('esi_edited') else '—' }}</td></tr>
-      {% if p.get('esi_edited') %}<tr><td colspan="2" class="small muted">{{ p.esi_edit_reason }} · {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}</td></tr>{% endif %}
-    </table>
-    {% if not locked %}
-    <div class="row" style="align-items:flex-end;margin-top:6px">
-      <div><label>Deduct ({{ cur }})</label><input name="amount" inputmode="decimal" style="width:90px" value="{{ p.esi|amt if p.get('esi_edited') else '' }}" placeholder="{{ p.get('esi_calc', p.esi)|amt }}"></div>
-      <div class="grow"><label>Reason</label><input name="reason" style="width:100%" value="{{ p.esi_edit_reason if p.get('esi_edited') else '' }}" placeholder="e.g. correction for last month"></div>
-      <button class="small">Save</button>
-      {% if p.get('esi_edited') %}<button class="light small" name="action" value="clear">Use calculated</button>{% endif %}
-    </div>
-    <p class="small muted" style="margin:4px 0 0">Changes only the amount deducted from this employee's pay. ESI wages, the employer share and the ESI report / ESIC file stay as calculated; the ESI report marks the edit.</p>
-    {% endif %}
-  </form>
-  {% endif %}
   <script>
   (function () {
     var box = document.getElementById('esi-calc'); if (!box) return;
@@ -267,170 +322,153 @@
       var total = num(document.getElementById('wi-sal').value) + ot + num(box.dataset.allow), excl = ot + ex;
       var wages = total - excl + Math.max(0, excl - total / 2), lim = num(box.dataset.ceiling);
       var emp = Math.ceil(wages * num(box.dataset.rate) / 100), er = Math.ceil(wages * num(box.dataset.er) / 100);
-      document.getElementById('wi-out').innerHTML = 'ESI wages <b>' + fmt(wages) + '</b> - ' +
-        (wages <= lim ? 'within the limit: employee <b>' + fmt(emp) + '</b>, employer <b>' + fmt(er) + '</b>'
-                      : '<span style="color:var(--bad)">above the ' + fmt(lim) + ' limit: not covered (unless already covered this period)</span>');
+      document.getElementById('wi-out').innerHTML = 'ESI wages <b>' + fmt(wages) + '</b><br>' +
+        (wages <= lim ? '<span class="ok-text">Within the ' + fmt(lim) + ' limit</span> · employee <b>' + fmt(emp) + '</b> · employer <b>' + fmt(er) + '</b>'
+                      : '<span class="bad-text">Above the ' + fmt(lim) + ' limit: not covered</span> (unless already covered this period)');
     }
     box.querySelectorAll('input.wi').forEach(function (i) { i.addEventListener('input', run); });
     run();
   })();
   </script>
-  <form method="post" action="{{ url_for('employee_salary', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc;min-width:300px">{{ csrf_field() }}
-    <input type="hidden" name="back" value="{{ request.full_path }}#salary">
-    <b>Edit salary</b>
-    <div class="form-grid" style="margin-top:8px">
-      <div><label>Category</label><select name="category">
-        <option value="worker" {{ 'selected' if (emp.category or 'worker') == 'worker' }}>Worker – overtime paid</option>
-        <option value="staff" {{ 'selected' if emp.category == 'staff' }}>Staff – payable days only, no OT</option></select></div>
-      <div><label>Salary type</label><select name="salary_type">
-        {% for k, l in [('monthly','Monthly'),('daily','Daily wage'),('hourly','Hourly wage')] %}<option value="{{ k }}" {{ 'selected' if k == emp.salary_type }}>{{ l }}</option>{% endfor %}</select></div>
-      <div><label>Rate ({{ cur }})</label><input name="salary_rate" type="number" step="0.01" min="0" value="{{ emp.salary_rate or 0 }}" required></div>
-      <div><label>OT multiplier</label><input name="ot_multiplier" type="number" step="0.05" min="0" value="{{ emp.ot_multiplier or 1 }}"></div>
-    </div>
-    <div style="margin-top:6px">
-      <label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if emp.ot_enabled }}> OT eligible</label>
-      <label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if emp.pf_enabled }}> PF</label>
-      <label class="chk"><input type="checkbox" name="esi_enabled" {{ 'checked' if emp.esi_enabled }}> ESI</label>
-    </div>
-    <div class="form-grid" style="margin-top:6px">
-      <div><label>Salary paid (default)</label><select name="pay_mode">{% for k, l in PAY_MODES.items() %}<option value="{{ k }}" {{ 'selected' if k == (emp.pay_mode or 'bank') }}>{{ l }}</option>{% endfor %}</select></div>
-      <div><label>Bank amount ({{ cur }}) or %</label><input name="bank_value" type="number" step="0.01" min="0" value="{{ emp.bank_value or 0 }}"></div>
-    </div>
-    {% set src = emp %}{% set rate_name = 'salary_rate' %}{% include "_components.html" %}
-    <p class="small muted" style="margin:6px 0">Saved on the employee's profile: applies to every month whose payroll is not finalized{{ ' (this month is finalized, so it keeps its frozen amounts)' if locked }}.</p>
-    <button>Save salary</button>
-  </form>
-  </div>
-  <div class="row" style="align-items:flex-start;margin-top:10px">
-    <form method="post" action="{{ url_for('pay_split', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc">{{ csrf_field() }}
+
+  <h3 class="group-title noprint">Payments this month</h3>
+  <div class="pane-grid three noprint">
+    <form method="post" action="{{ url_for('pay_split', eid=emp.id) }}" class="sub">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
-      <b>Bank / cash for {{ month }}</b>
-      <p class="small muted" style="margin:4px 0">Net {{ cur }}{{ p.net|money }} → bank {{ cur }}{{ p.get('bank', p.net)|money }}, cash {{ cur }}{{ p.get('cash', 0)|money }}
-        ({{ 'set for this month' if p.get('bank_override') else 'default: ' ~ PAY_MODES.get(emp.pay_mode or 'bank') }}).</p>
+      <h3>Bank / cash split</h3>
+      <table class="kv">
+        <tr><td>Net pay</td><td class="n">{{ cur }}{{ p.net|money }}</td></tr>
+        <tr class="{{ 'edited' if p.get('bank_override') }}"><td>By bank</td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
+        <tr><td>In cash</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
+        <tr><td colspan="2" class="small muted">{{ 'Set for this month' if p.get('bank_override') else 'Default: ' ~ PAY_MODES.get(emp.pay_mode or 'bank') }}</td></tr>
+      </table>
       {% if not locked %}
-      <div class="row" style="align-items:flex-end">
-        <div><label>Pay by bank this month ({{ cur }})</label><input name="bank_amount" type="number" step="1" min="0" value="{{ p.bank|int if p.get('bank_override') else '' }}" placeholder="{{ p.get('bank', p.net)|int }}" style="width:120px"></div>
-        <button class="small">Set</button>
-        {% if p.get('bank_override') %}<button class="light small" name="action" value="reset">Use default</button>{% endif %}
-      </div>
-      <p class="small muted" style="margin:4px 0 0">The rest of the net pay is paid in cash.</p>
+      <div class="fgrid one"><div><label>Pay by bank this month ({{ cur }})</label><input name="bank_amount" type="number" step="1" min="0" value="{{ p.bank|int if p.get('bank_override') else '' }}" placeholder="{{ p.get('bank', p.net)|int }}"></div></div>
+      <div class="actions"><button class="small">Set</button>
+        {% if p.get('bank_override') %}<button class="light small" name="action" value="reset">Use default</button>{% endif %}</div>
+      <p class="hint">The rest of the net pay is paid in cash.</p>
       {% endif %}
     </form>
+
     {% set bp = row.get('bank_paid') %}{% set bank_calc = p.get('bank', p.net) %}
     {% if bank_calc > 0 or bp %}
-    <form method="post" action="{{ url_for('bank_paid', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc" id="bank-paid">{{ csrf_field() }}
+    <form method="post" action="{{ url_for('bank_paid', eid=emp.id) }}" class="sub" id="bank-paid">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#bank-paid">
-      <b>Bank payment for {{ month }}</b>
-      <table style="margin-top:4px">
+      <div class="sub-head"><h3>Bank payment</h3>
+        {% if not bp %}<span class="badge warn">not paid yet</span>
+        {% elif bp.status == 'paid' %}<span class="badge ok">✓ paid {{ bp.paid_on }}</span>
+        {% else %}<span class="badge bad">✗ failed {{ bp.paid_on }}</span>{% endif %}</div>
+      <table class="kv">
         <tr><td>By bank (calculated)</td><td class="n">{{ cur }}{{ bank_calc|money }}</td></tr>
-        <tr class="{{ 'edited' if bp and bp.status != 'paid' }}"><td>Status</td><td class="n">
-          {% if not bp %}<span class="badge warn">not paid yet</span>
-          {% elif bp.status == 'paid' %}<span class="badge ok">✓ paid {{ bp.paid_on }}</span>
-          {% else %}<span class="badge bad">✗ failed {{ bp.paid_on }}</span>{% endif %}</td></tr>
         {% if bp %}<tr class="{{ 'edited' if row.bank_diff }}"><td>Amount{{ ' paid' if bp.status == 'paid' }}</td><td class="n">{{ cur }}{{ bp.amount|money }}{% if row.bank_diff %} <span class="small">({{ '%+.2f'|format(row.bank_diff) }})</span>{% endif %}</td></tr>
         {% if bp.reference %}<tr><td>UTR / reference</td><td class="n">{{ bp.reference }}</td></tr>{% endif %}
         <tr><td colspan="2" class="small muted">recorded by {{ bp.created_by }} {{ (bp.created_at or '')[:16] }}{{ ' · ' ~ bp.note if bp.note }}</td></tr>{% endif %}
       </table>
-      <div class="row" style="align-items:flex-end;margin-top:6px">
+      <div class="fgrid">
         <div><label>Paid on</label><input type="date" name="paid_on" value="{{ bp.paid_on if bp else today_iso }}"></div>
-        <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" style="width:100px" value="{{ bp.amount|amt if bp else '' }}" placeholder="{{ bank_calc|amt }}"></div>
-        <div class="grow"><label>UTR / reference</label><input name="reference" style="width:100%" value="{{ bp.reference if bp else '' }}" placeholder="bank transaction no."></div>
+        <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" value="{{ bp.amount|amt if bp else '' }}" placeholder="{{ bank_calc|amt }}"></div>
+        <div class="span2"><label>UTR / reference</label><input name="reference" value="{{ bp.reference if bp else '' }}" placeholder="bank transaction no."></div>
       </div>
-      <div class="row" style="margin-top:6px">
-        <button class="small" name="action" value="paid">Mark paid</button>
+      <div class="actions"><button class="small" name="action" value="paid">Mark paid</button>
         <button class="light small" name="action" value="failed">Mark failed</button>
-        {% if bp %}<button class="light small" name="action" value="clear" onclick="return confirm('Remove the bank payment record?')">Undo</button>{% endif %}
-      </div>
-      <p class="small muted" style="margin:4px 0 0">Empty amount = the calculated bank amount. For many employees at once use <a href="{{ url_for('bank_sheet', month=month) }}">Payroll → Bank sheet</a>.</p>
+        {% if bp %}<button class="light small" name="action" value="clear" onclick="return confirm('Remove the bank payment record?')">Undo</button>{% endif %}</div>
+      <p class="hint">Empty amount = the calculated bank amount. Many employees at once: <a href="{{ url_for('bank_sheet', month=month) }}">Bank sheet</a>.</p>
     </form>
     {% endif %}
+
     {% set cp = row.get('cash_paid') %}
-    <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="card grow noprint" style="background:#f8fafc">{{ csrf_field() }}
+    <form method="post" action="{{ url_for('cash_paid', eid=emp.id) }}" class="sub">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
-      <b>Cash actually paid for {{ month }}</b>
-      <table style="margin-top:4px">
+      <h3>Cash actually paid</h3>
+      <table class="kv">
         <tr><td>Cash (calculated)</td><td class="n">{{ cur }}{{ p.get('cash', 0)|money }}</td></tr>
         <tr class="{{ 'edited' if cp and row.cash_diff }}"><td>Cash paid</td><td class="n">{{ (cur ~ (cp.paid_amount|money)) if cp else '—' }}</td></tr>
         {% if cp %}<tr><td>Difference</td><td class="n"><b>{{ '%+.2f'|format(row.cash_diff) }}</b>{% if cp.carried_month %} <span class="small muted">carried to {{ cp.carried_month }}</span>{% endif %}</td></tr>{% endif %}
       </table>
       {% if not (cp and cp.carried_month) %}
-      <div class="row" style="align-items:flex-end;margin-top:6px">
-        <div><label>Paid ({{ cur }})</label><input name="paid_amount" inputmode="decimal" style="width:110px" value="{{ cp.paid_amount|amt if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
-        <div class="grow"><label>Note</label><input name="note" style="width:100%" value="{{ cp.note if cp else '' }}" placeholder="rounded off"></div>
-        <button class="small">Save</button>
+      <div class="fgrid">
+        <div><label>Paid ({{ cur }})</label><input name="paid_amount" inputmode="decimal" value="{{ cp.paid_amount|amt if cp else '' }}" placeholder="{{ p.get('cash', 0)|round|int }}"></div>
+        <div><label>Note</label><input name="note" value="{{ cp.note if cp else '' }}" placeholder="rounded off"></div>
       </div>
-      {% endif %}
-      {% if cp and row.cash_diff and not cp.carried_month %}
-      <button class="light small" style="margin-top:6px" form="carry-cash" title="Short-paid is added as an allowance, over-paid is deducted">Carry {{ '%+.2f'|format(row.cash_diff) }} into next month</button>
+      <div class="actions"><button class="small">Save</button>
+        {% if cp and row.cash_diff %}<button class="light small" form="carry-cash" title="Short-paid is added as an allowance, over-paid is deducted">Carry {{ '%+.2f'|format(row.cash_diff) }} to next month</button>{% endif %}</div>
       {% endif %}
     </form>
     {% if cp and row.cash_diff and not cp.carried_month %}
     <form method="post" action="{{ url_for('cash_carry', eid=emp.id) }}" id="carry-cash" style="display:none">{{ csrf_field() }}
       <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary"></form>
     {% endif %}
-    <div class="card grow" style="background:#f8fafc">
-      <b>Advance</b>
+  </div>
+
+  <h3 class="group-title noprint">Advance &amp; deductions</h3>
+  <div class="pane-grid two noprint">
+    <div class="sub">
+      <h3>Advance</h3>
       {% if adv and (adv.outstanding_before > 0 or adv.this_month) %}
-      <table style="margin-top:4px">
+      <table class="kv">
         <tr><td>Outstanding at start of {{ month }}</td><td class="n"><b>{{ cur }}{{ adv.outstanding_before|money }}</b></td></tr>
         <tr class="{{ 'edited' if adv.this_month }}"><td>Recovered this month</td><td class="n">{{ cur }}{{ adv.this_month|money }}</td></tr>
         <tr><td>Balance after</td><td class="n">{{ cur }}{{ adv.remaining|money }}</td></tr>
       </table>
       {% if not locked and adv.outstanding_before > 0 %}
-      <form method="post" action="{{ url_for('advances_action') }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+      <form method="post" action="{{ url_for('advances_action') }}">{{ csrf_field() }}
         <input type="hidden" name="employee_id" value="{{ emp.id }}"><input type="hidden" name="month" value="{{ month }}">
         <input type="hidden" name="back" value="{{ request.full_path }}#salary">
-        <div><label>Recover this month ({{ cur }})</label><input type="number" name="amount" step="0.01" min="0" max="{{ adv.outstanding_before }}" value="{{ adv.this_month or adv.suggest }}" style="width:110px"></div>
-        <button class="small" name="action" value="recover">Set</button>
-        <button class="light small" name="action" value="recover_full">Full</button>
-        {% if adv.installment %}<button class="light small" name="action" value="recover_installment">Instalment {{ adv.installment|money }}</button>{% endif %}
+        <div class="fgrid one"><div><label>Recover this month ({{ cur }})</label><input type="number" name="amount" step="0.01" min="0" max="{{ adv.outstanding_before }}" value="{{ adv.this_month or adv.suggest }}"></div></div>
+        <div class="actions"><button class="small" name="action" value="recover">Set</button>
+          <button class="light small" name="action" value="recover_full">Full</button>
+          {% if adv.installment %}<button class="light small" name="action" value="recover_installment">Instalment {{ adv.installment|money }}</button>{% endif %}</div>
       </form>
       {% endif %}
-      {% else %}<p class="small muted" style="margin:4px 0">No advance outstanding.</p>{% endif %}
+      {% else %}<p class="small muted" style="margin:0">No advance outstanding.</p>{% endif %}
       {% if not locked %}
-      <details style="margin-top:6px" {{ 'open' if not adv or adv.outstanding_before <= 0 }}>
-        <summary class="small" style="cursor:pointer"><b>Record an advance given</b> (then deduct it above)</summary>
-        <form method="post" action="{{ url_for('advances_action') }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+      <details class="sub-details" {{ 'open' if not adv or adv.outstanding_before <= 0 }}>
+        <summary class="small"><b>Record an advance given</b> <span class="muted">(then recover it above)</span></summary>
+        <form method="post" action="{{ url_for('advances_action') }}">{{ csrf_field() }}
           <input type="hidden" name="action" value="give"><input type="hidden" name="employee_id" value="{{ emp.id }}">
           <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
-          <div><label>Date given</label><input type="date" name="given_date" value="{{ month }}-01" required></div>
-          <div><label>Amount ({{ cur }})</label><input type="number" name="amount" step="0.01" min="1" required style="width:100px"></div>
-          <div><label>Instalment / month</label><input type="number" name="installment" step="0.01" min="1" style="width:100px"></div>
-          <button class="small">Record</button>
+          <div class="fgrid three">
+            <div><label>Date given</label><input type="date" name="given_date" value="{{ month }}-01" required></div>
+            <div><label>Amount ({{ cur }})</label><input type="number" name="amount" step="0.01" min="1" required></div>
+            <div><label>Instalment / month</label><input type="number" name="installment" step="0.01" min="1"></div>
+          </div>
+          <div class="actions"><button class="small">Record</button></div>
         </form>
       </details>
       {% endif %}
-      <p class="small" style="margin:6px 0 0"><a href="{{ url_for('adjustments', month=month) }}">All advances / history</a></p>
+      <p class="hint"><a href="{{ url_for('adjustments', month=month) }}">All advances / history</a></p>
     </div>
-    <div class="card grow" style="background:#f8fafc" id="other-deductions">
-      <b>Other deductions / additions</b>
+
+    <div class="sub" id="other-deductions">
+      <h3>Other deductions / additions</h3>
       {% set lbl = {'deduction': 'Deduction', 'tds': 'TDS', 'allowance': 'Allowance', 'bonus': 'Bonus'} %}
       {% if adjs %}
-      <table style="margin-top:4px">
+      <table class="kv">
         {% for a in adjs %}
         <tr class="edited"><td>{{ lbl.get(a.kind, a.kind) }}{% if a.note %} <span class="small muted">· {{ a.note }}</span>{% endif %}</td>
           <td class="n" style="color:{{ 'var(--bad)' if a.kind in ('deduction', 'tds') else 'var(--ok)' }}">{{ '−' if a.kind in ('deduction', 'tds') else '+' }}{{ cur }}{{ a.amount|money }}</td>
-          <td>{% if not locked %}<form method="post" action="{{ url_for('adjustments', month=month) }}" class="inline" onsubmit="return confirm('Remove this entry?')">{{ csrf_field() }}
+          <td style="width:1%">{% if not locked %}<form method="post" action="{{ url_for('adjustments', month=month) }}" class="inline" onsubmit="return confirm('Remove this entry?')">{{ csrf_field() }}
             <input type="hidden" name="delete" value="{{ a.id }}"><input type="hidden" name="back" value="{{ request.full_path }}#other-deductions">
             <button class="light small" title="Remove">✕</button></form>{% endif %}</td></tr>
         {% endfor %}
       </table>
-      {% else %}<p class="small muted" style="margin:4px 0">None this month.</p>{% endif %}
+      {% else %}<p class="small muted" style="margin:0">None this month.</p>{% endif %}
       {% if not locked %}
-      <form method="post" action="{{ url_for('adjustments', month=month) }}" class="row" style="align-items:flex-end;margin-top:6px">{{ csrf_field() }}
+      <form method="post" action="{{ url_for('adjustments', month=month) }}">{{ csrf_field() }}
         <input type="hidden" name="employee_id" value="{{ emp.id }}"><input type="hidden" name="back" value="{{ request.full_path }}#other-deductions">
-        <div><label>Type</label><select name="kind">
-          <option value="deduction" selected>Deduction (−)</option><option value="tds">TDS (−)</option>
-          <option value="allowance">Allowance (+)</option><option value="bonus">Bonus (+)</option></select></div>
-        <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" required style="width:100px"></div>
-        <div class="grow"><label>Note</label><input name="note" style="width:100%" placeholder="e.g. canteen, damage, uniform"></div>
-        <button class="small">Add</button>
+        <div class="fgrid three">
+          <div><label>Type</label><select name="kind">
+            <option value="deduction" selected>Deduction (−)</option><option value="tds">TDS (−)</option>
+            <option value="allowance">Allowance (+)</option><option value="bonus">Bonus (+)</option></select></div>
+          <div><label>Amount ({{ cur }})</label><input name="amount" inputmode="decimal" required></div>
+          <div><label>Note</label><input name="note" placeholder="canteen, uniform…"></div>
+        </div>
+        <div class="actions"><button class="small">Add</button></div>
       </form>
       {% endif %}
-      <p class="small muted" style="margin:6px 0 0">Several entries per month are fine; they show on the salary, payslip and Excel.</p>
+      <p class="hint">Several entries per month are fine; they show on the salary, payslip and Excel.</p>
     </div>
   </div>
-  {% if not p.rate %}<p class="flash error">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
-</div>
+</section>
 {% endif %}
 {% endblock %}
