@@ -1958,6 +1958,10 @@ def esi_edit(eid):
     reason = (f.get("reason") or "").strip() or "manual edit"
     rows = [r for r in payroll.compute_month(g.conn, month, employee_ids={eid})]
     calc = rows[0]["pay"].get("esi_calc", rows[0]["pay"]["esi"]) if rows else None
+    if calc is not None and abs(amount - calc) < 0.005:   # same as calculated: no edit to keep
+        g.conn.execute("DELETE FROM esi_overrides WHERE employee_id=? AND month=?", (eid, month))
+        flash(f"ESI for {emp['name']} {month}: {amount:g}, as calculated", "ok")
+        return redirect(back)
     g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)
                       ON CONFLICT(employee_id, month) DO UPDATE SET amount=excluded.amount, reason=excluded.reason,
                       created_by=excluded.created_by, created_at=excluded.created_at""",
@@ -1965,6 +1969,42 @@ def esi_edit(eid):
     audit("esi_edit", {"emp": eid, "month": month, "calculated": calc, "edited": amount, "reason": reason})
     flash(f"ESI for {emp['name']} {month}: {amount:g} deducted instead of the calculated {calc:g}" if calc is not None
           else f"ESI for {emp['name']} {month} set to {amount:g}", "ok")
+    return redirect(back)
+
+
+@app.route("/employees/<int:eid>/esi_apply", methods=["POST"])
+@pay_required
+def esi_apply(eid):
+    """From the ESI calculator: pay by bank this month = ESI wages - employee share; ESI deduction = employee share."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    ensure_unlocked(month)
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    try:
+        bank, esi = parse_amount(f.get("bank_amount")), parse_amount(f.get("esi_amount"))
+    except ValueError as e:
+        flash(f"Not saved: {e}", "error")
+        return redirect(back)
+    if bank < 0 or esi < 0:
+        flash("Not saved: amounts cannot be negative", "error")
+        return redirect(back)
+    now, user = dt.datetime.now().strftime(TS_FMT), g.user["username"]
+    g.conn.execute("""INSERT INTO pay_splits(employee_id, month, bank_amount, note, created_by, created_at) VALUES (?,?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET bank_amount=excluded.bank_amount, note=excluded.note,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, bank, "from ESI calculator", user, now))
+    g.conn.execute("DELETE FROM esi_overrides WHERE employee_id=? AND month=?", (eid, month))
+    rows = payroll.compute_month(g.conn, month, employee_ids={eid})
+    calc = rows[0]["pay"]["esi"] if rows else None
+    if calc is None or abs(esi - calc) >= 0.005:   # keep an edit only when it differs from the calculated ESI
+        g.conn.execute("""INSERT INTO esi_overrides(employee_id, month, amount, reason, created_by, created_at) VALUES (?,?,?,?,?,?)""",
+                       (eid, month, esi, "from ESI calculator", user, now))
+    audit("esi_apply", {"emp": eid, "month": month, "bank": bank, "esi": esi})
+    cur = g.settings.get("currency", "₹")
+    flash(f"{emp['name']} {month}: {cur}{bank:,.2f} by bank, ESI deduction {cur}{esi:,.2f}; the rest of the net pay in cash", "ok")
     return redirect(back)
 
 

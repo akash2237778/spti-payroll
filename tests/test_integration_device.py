@@ -702,6 +702,21 @@ def test_end_to_end(client):
     assert "cannot be negative" in post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount="-5").get_data(as_text=True)
     assert pay_of(sep_emp)["esi"] == 50                       # negative refused
     post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", action="clear")
+    # saving the calculated amount unchanged keeps no edit
+    post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", amount=str(p0["esi"]))
+    assert not pay_of(sep_emp)["esi_edited"]
+    # calculator "Apply": bank this month = ESI wages - employee share, ESI deduction = employee share
+    page = c.get(f"/attendance/employee/{sep_emp}?month=2026-09").get_data(as_text=True)
+    assert 'id="esi-apply"' in page and 'form="esi-edit" name="amount"' in page
+    post(c, f"/employees/{sep_emp}/esi_apply", month="2026-09", bank_amount="12000", esi_amount=str(p0["esi"]))
+    assert not pay_of(sep_emp)["esi_edited"] and pay_of(sep_emp)["bank"] == 12000        # same as calculated: no ESI edit
+    r = post(c, f"/employees/{sep_emp}/esi_apply", month="2026-09", bank_amount="12485.65", esi_amount="95")
+    assert "by bank, ESI deduction" in r.get_data(as_text=True)
+    pa = pay_of(sep_emp)
+    assert pa["esi"] == 95 and pa["esi_edited"] and pa["bank"] == 12485.65 and abs(pa["cash"] - (pa["net"] - 12485.65)) < 0.01
+    assert pa["esi_wages"] == p0["esi_wages"] and pa["esi_employer"] == p0["esi_employer"]      # statutory figures unchanged
+    post(c, f"/employees/{sep_emp}/esi_edit", month="2026-09", action="clear")
+    post(c, f"/employees/{sep_emp}/split", month="2026-09", action="reset")
     assert not pay_of(sep_emp)["esi_edited"] and pay_of(sep_emp)["esi"] == p0["esi"]
 
     # ---- employee groups for the attendance PDF (kept across months)

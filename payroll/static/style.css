@@ -373,3 +373,11 @@ table.kv tr.grand th { font-size: 15px; color: var(--brand); }
   .emp-stats .stat span { min-height: 0; }
   .emp-stats .stat { padding: 8px 10px; }
 }
+
+.inline-edit { display: inline-flex; align-items: center; gap: 4px; justify-content: flex-end; }
+.inline-edit input { width: 84px; text-align: right; padding: 3px 6px; min-height: 0; }
+.inline-edit button { padding: 3px 8px; }
+tr.esi-row td { vertical-align: middle; }
+.print-only { display: none; }
+@media print { .print-only { display: inline; } }
+.sub table.kv .inline-edit input { width: 84px; flex: 0 0 84px; }

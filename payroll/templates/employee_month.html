@@ -196,13 +196,14 @@
   <div class="sec-head"><h2>Salary <span class="muted small">{{ 'Staff · ' if p.category == 'staff' }}{{ p.salary_type }} @ {{ cur }}{{ p.rate|money }}</span></h2>
     <div class="sec-tools noprint">
       <button type="button" class="light small" onclick="var x = document.getElementById('esi-calc'); x.hidden = !x.hidden; if (!x.hidden) x.scrollIntoView({block: 'nearest'})">ESI calculator</button>
-      <button type="button" class="light small" onclick="var x = document.getElementById('esi-edit'); x.hidden = !x.hidden; if (!x.hidden) x.scrollIntoView({block: 'nearest'})">Edit ESI deduction</button>
     </div></div>
   {% if not p.rate %}<p class="flash error" style="margin:0 0 12px">Salary rate is not set for this employee - enter it in "Edit salary".</p>{% endif %}
 
   <div class="pane-grid two">
     <div class="sub">
       <h3>Pay for {{ month }}</h3>
+      <form method="post" action="{{ url_for('esi_edit', eid=emp.id) }}" id="esi-edit" class="noprint">{{ csrf_field() }}
+        <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary"></form>
       <table class="kv">
         <tr class="{{ 'edited' if ed.payable_days }}"><td>Payable days</td><td class="n">{{ p.payable_days|days }}</td></tr>
         <tr><td>Per day / per hour</td><td class="n">{{ cur }}{{ p.per_day|money }} / {{ cur }}{{ p.hour_rate|money }}</td></tr>
@@ -212,8 +213,14 @@
         <tr><td>Allowances + bonus</td><td class="n">{{ (p.allowance + p.bonus)|money }}</td></tr>
         <tr class="total"><th>Gross</th><th class="n">{{ p.gross|money }}</th></tr>
         <tr><td>ESI wages <span class="small muted">(for ESI)</span></td><td class="n">{{ p.get('esi_wages', 0)|money }}</td></tr>
-        <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>PF / ESI{% if p.get('esi_edited') %} <span class="badge warn" title="{{ p.esi_edit_reason }} - {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}">ESI edited</span>{% endif %}</td>
-          <td class="n">{{ p.pf|money }} / {{ p.esi|money }}{% if p.get('esi_edited') %} <span class="small muted">(calc. {{ p.esi_calc|money }})</span>{% endif %}</td></tr>
+        <tr><td>PF</td><td class="n">{{ p.pf|money }}</td></tr>
+        <tr class="esi-row {{ 'edited' if p.get('esi_edited') }}"><td>ESI deduction <span class="small muted">{{ settings.esi_rate or 0.75 }}%</span>
+            {% if p.get('esi_edited') %}<span class="badge warn" title="{{ p.esi_edit_reason }} - {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}">edited · calc. {{ p.esi_calc|money }}</span>{% endif %}</td>
+          <td class="n">{% if not locked %}<span class="inline-edit noprint">
+              <input form="esi-edit" name="amount" inputmode="decimal" value="{{ p.esi|amt }}" title="Employee ESI deducted this month (calculated {{ p.get('esi_calc', p.esi)|money }})">
+              <button form="esi-edit" class="small" title="Save the ESI deduction">Save</button>
+              {% if p.get('esi_edited') %}<button form="esi-edit" class="light small" name="action" value="clear" title="Back to the calculated {{ p.esi_calc|money }}">&#8634;</button>{% endif %}
+            </span><span class="print-only">{{ p.esi|money }}</span>{% else %}{{ p.esi|money }}{% endif %}</td></tr>
         <tr><td>Advance / TDS / other</td><td class="n">{{ p.advance|money }} / {{ p.tds|money }} / {{ p.other_deduction|money }}</td></tr>
         <tr class="total grand"><th>Net pay</th><th class="n">{{ cur }}{{ p.net|money }}</th></tr>
         <tr class="{{ 'edited' if p.get('bank_override') }}"><td>Paid by bank <span class="small muted">{{ p.get('pay_how', '') }}</span></td><td class="n">{{ cur }}{{ p.get('bank', p.net)|money }}</td></tr>
@@ -252,7 +259,7 @@
   {% set addback = [0, excluded - total_rem / 2]|max %}
   {% set min_wage = (settings.get('min_wage_monthly') or '')|trim %}
   {% set wi_sal = min_wage if min_wage else (emp.salary_rate or 0)|amt %}
-  <div class="pane-grid two esi-panes">
+  <div class="esi-panes">
     <div class="sub noprint esi-calc" id="esi-calc" hidden
          data-rate="{{ settings.esi_rate or 0.75 }}" data-er="{{ settings.esi_employer_rate or 3.25 }}"
          data-ceiling="{{ (settings.esi_disabled_ceiling if emp.disabled_person else settings.esi_gross_ceiling) or 21000 }}"
@@ -295,6 +302,13 @@
             <tr class="total grand"><th>ESI wages − employee share</th><th class="n" id="wi-net"></th></tr>
           </table>
           <div class="wi-out" id="wi-out"></div>
+          {% if not locked %}
+          <form method="post" action="{{ url_for('esi_apply', eid=emp.id) }}" id="esi-apply" class="actions" onsubmit="return applyEsi(this)">{{ csrf_field() }}
+            <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
+            <input type="hidden" name="bank_amount"><input type="hidden" name="esi_amount">
+            <button class="small" title="Pay by bank this month = ESI wages - employee share; ESI deduction = employee share">Apply to {{ month }}: bank &amp; ESI deduction</button>
+          </form>
+          {% endif %}
           <div class="actions"><button type="button" class="light small" onclick="document.getElementById('wi-sal').value='{{ wi_sal }}';document.getElementById('wi-days').value='{{ wi_days }}';document.getElementById('wi-ot').value='0';document.getElementById('wi-ex').value='0';document.getElementById('wi-ot').dispatchEvent(new Event('input'))">Reset</button></div>
           <p class="hint">Days are taken from this month's attendance ({{ s.get('cnt_P', 0)|days }} present{{ ' + ' ~ (s.get('paid_off_days', 0)|days) ~ ' paid weekly offs / holidays / leave' if s.get('paid_off_days') }}{{ ', after edits' if s.get('edited', {}).payable_days }}).
             Monthly salary starts at {{ 'the legal minimum wage (' ~ min_wage ~ ', Settings)' if min_wage else "the monthly rate - set the legal minimum wage in Settings to start from it" }}.
@@ -303,25 +317,6 @@
       </div>
     </div>
 
-    <form method="post" action="{{ url_for('esi_edit', eid=emp.id) }}" class="sub noprint esi-edit-box" id="esi-edit" {{ 'hidden' if not p.get('esi_edited') }}>{{ csrf_field() }}
-      <input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}#salary">
-      <div class="sub-head"><h3>ESI deduction for {{ month }}</h3>
-        <button type="button" class="light small" onclick="document.getElementById('esi-edit').hidden = true" title="Close">✕</button></div>
-      <table class="kv">
-        <tr><td>Calculated</td><td class="n">{{ p.get('esi_calc', p.esi)|money }}</td></tr>
-        <tr class="{{ 'edited' if p.get('esi_edited') }}"><td>Edited</td><td class="n">{{ p.esi|money if p.get('esi_edited') else '—' }}</td></tr>
-        {% if p.get('esi_edited') %}<tr><td colspan="2" class="small muted">{{ p.esi_edit_reason }} · {{ p.esi_edit_by }} {{ (p.esi_edit_at or '')[:16] }}</td></tr>{% endif %}
-      </table>
-      {% if not locked %}
-      <div class="fgrid">
-        <div><label>Deduct ({{ cur }})</label><input name="amount" inputmode="decimal" value="{{ p.esi|amt if p.get('esi_edited') else '' }}" placeholder="{{ p.get('esi_calc', p.esi)|amt }}"></div>
-        <div><label>Reason</label><input name="reason" value="{{ p.esi_edit_reason if p.get('esi_edited') else '' }}" placeholder="e.g. correction"></div>
-      </div>
-      <div class="actions"><button class="small">Save</button>
-        {% if p.get('esi_edited') %}<button class="light small" name="action" value="clear">Use calculated</button>{% endif %}</div>
-      <p class="hint">Changes only the amount deducted from this employee's pay. ESI wages, the employer share and the ESI report / ESIC file stay as calculated; the ESI report marks the edit.</p>
-      {% endif %}
-    </form>
   </div>
   <script>
   (function () {
@@ -342,10 +337,17 @@
       var er = covered ? Math.ceil(wages * num(box.dataset.er) / 100) : 0;
       set('wi-earn', fmt(earned)); set('wi-earn-how', fmt(monthly) + ' × ' + fmt(days) + ' / ' + div);
       set('wi-wages', fmt(wages)); set('wi-emp', fmt(emp)); set('wi-er', fmt(er)); set('wi-net', fmt(wages - emp));
+      box.dataset.bank = (Math.round((wages - emp) * 100) / 100).toFixed(2); box.dataset.esi = String(emp);
       document.getElementById('wi-out').innerHTML = covered
         ? '<span class="ok-text">Within the ' + fmt(lim) + ' limit</span>' + (lowDay ? ' · daily wage ' + fmt(wages / days) + ' is at or below ' + fmt(num(box.dataset.low)) + ': no employee share' : '')
         : '<span class="bad-text">Above the ' + fmt(lim) + ' limit: not covered</span> (unless already covered this period)';
     }
+    window.applyEsi = function (f) {
+      run();
+      f.bank_amount.value = box.dataset.bank; f.esi_amount.value = box.dataset.esi;
+      return confirm('For {{ month }}:\n- Pay by bank this month: ' + fmt(num(box.dataset.bank)) + ' (ESI wages - employee share)\n- ESI deduction: ' +
+                     fmt(num(box.dataset.esi)) + ' (employee share)\n\nThe rest of the net pay is paid in cash. Both can be changed later.');
+    };
     box.querySelectorAll('input.wi').forEach(function (i) { i.addEventListener('input', run); });
     run();
   })();
