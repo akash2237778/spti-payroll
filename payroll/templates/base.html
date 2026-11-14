@@ -47,18 +47,38 @@
   {% block body %}{% endblock %}
 </main>
 <script>
-/* Keep the reader's place after saving: remember the scroll position (page + scrolling tables) when a form is posted
-   and go back to it when the same page reloads, instead of jumping to the top or to a #section. */
+/* After saving: keep the reader's place (page + scrolling tables) and show which button did the saving -
+   it is greyed out with a tick until something in its form changes. While saving the button shows "Saving...". */
 (function () {
   var KEY = 'spti-scroll';
   function boxes() { return Array.prototype.slice.call(document.querySelectorAll('.scroll, .roster-wrap')); }
+  function sig(f) {   // identifies "the same form" after the page reloads: action + its hidden identity fields
+    var parts = [f.getAttribute('action') || location.pathname];
+    Array.prototype.forEach.call(f.querySelectorAll('input[type=hidden]'), function (h) {
+      if (h.name && h.name !== 'csrf' && h.name !== 'back') parts.push(h.name + '=' + h.value);
+    });
+    return parts.join('|');
+  }
+  function label(b) { return (b.textContent || b.value || '').replace(/\s+/g, ' ').trim(); }
   document.addEventListener('submit', function (e) {
     var f = e.target;
     if (e.defaultPrevented || (f.method || '').toLowerCase() !== 'post' || (f.target && f.target !== '_self')) return;
+    if (f.dataset.busy) { e.preventDefault(); return; }          // no double submit
+    f.dataset.busy = '1';
+    var b = e.submitter || f.querySelector('button:not([type=button]), input[type=submit]');
+    var same = Array.prototype.filter.call(document.forms, function (x) { return sig(x) === sig(f); });
     try {
       sessionStorage.setItem(KEY, JSON.stringify({ path: location.pathname, x: window.scrollX, y: window.scrollY,
-        inner: boxes().map(function (b) { return [b.scrollLeft, b.scrollTop]; }), t: Date.now() }));
+        inner: boxes().map(function (x) { return [x.scrollLeft, x.scrollTop]; }), t: Date.now(),
+        form: sig(f), nth: same.indexOf(f), btn: b ? [b.name || '', b.value || '', label(b)] : null }));
     } catch (err) {}
+    if (b) setTimeout(function () { b.dataset.label = label(b); b.textContent = 'Saving…'; b.disabled = true; b.classList.add('busy'); }, 0);
+  });
+  // a page shown again from the browser cache must not keep a button stuck on "Saving..."
+  window.addEventListener('pageshow', function (ev) {
+    if (!ev.persisted) return;
+    document.querySelectorAll('button.busy').forEach(function (b) { b.disabled = false; b.textContent = b.dataset.label; b.classList.remove('busy'); });
+    Array.prototype.forEach.call(document.forms, function (f) { delete f.dataset.busy; });
   });
   var saved = null;
   try { saved = JSON.parse(sessionStorage.getItem(KEY) || 'null'); sessionStorage.removeItem(KEY); } catch (err) {}
@@ -71,6 +91,29 @@
   restore();
   window.addEventListener('load', function () { restore(); requestAnimationFrame(restore); });
   if (location.hash) history.replaceState(null, '', location.pathname + location.search);   // no jump to #section
+
+  // success: grey out the button that saved, until its form is changed
+  var ok = document.querySelector('.flashes .flash.ok'), bad = document.querySelector('.flashes .flash.error');
+  if (!ok || bad || !saved.btn) return;
+  var forms = Array.prototype.filter.call(document.forms, function (x) { return sig(x) === saved.form; });
+  var f = forms[saved.nth] || (forms.length === 1 ? forms[0] : null);
+  if (!f) return;
+  var btn = Array.prototype.find.call(f.elements, function (el) {
+    return (el.tagName === 'BUTTON' || el.type === 'submit') && (el.name || '') === saved.btn[0] && (el.value || '') === saved.btn[1] && label(el) === saved.btn[2];
+  });
+  if (!btn || btn.disabled) return;
+  var text = label(btn);
+  btn.dataset.label = text;
+  btn.textContent = (/^save\b/i.test(text) ? 'Saved' : text) + ' ✓';
+  btn.disabled = true; btn.classList.add('done');
+  var oldTitle = btn.title; btn.title = 'Saved - change something to enable again';
+  function wake() {
+    if (!btn.classList.contains('done')) return;
+    btn.classList.remove('done'); btn.disabled = false; btn.textContent = btn.dataset.label; btn.title = oldTitle;
+  }
+  Array.prototype.forEach.call(f.elements, function (el) {
+    if (el !== btn) { el.addEventListener('input', wake); el.addEventListener('change', wake); }
+  });
 })();
 </script>
 </body></html>

@@ -386,3 +386,5 @@ tr.esi-row.saved > td { background: #eef8f1; }
 tr.esi-row .badge.ok { margin-left: 4px; }
 #esi-apply-btn[disabled] { opacity: .55; cursor: default; }
 .esi-cols { align-items: start; }
+button.done, .btn.done { background: #e7f6ed !important; color: #145c33 !important; border-color: #b7e2c6 !important; opacity: 1; cursor: default; }
+button.busy { opacity: .7; cursor: progress; }
