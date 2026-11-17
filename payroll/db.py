@@ -272,12 +272,19 @@ def init_db():
             c.execute("INSERT INTO settings(key, value) VALUES ('migrated_8h_day', '1')")
         if not c.execute("SELECT 1 FROM settings WHERE key = 'seeded_night_shift'").fetchone():
             if not c.execute("SELECT 1 FROM shifts WHERE name = 'Night'").fetchone():
-                # Night duty seen on the real data: in ~21:00, out ~09:00 next morning.
+                # Night duty: 21:00-05:30 = 8 working hours + 30 min lunch; staying on (e.g. to 09:00) is overtime.
                 # Day starts at 12:00 so an unpaired morning punch counts for the previous night.
                 c.execute("""INSERT INTO shifts(name, start_time, end_time, break_min, break_after_min, grace_in_min,
-                             grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour, std_min)
-                             VALUES ('Night', '21:00', '09:00', 30, 300, 15, 15, 480, 240, 30, 30, 12, 480)""")
+                             grace_out_min, full_day_min, half_day_min, ot_after_min, ot_round_min, day_start_hour)
+                             VALUES ('Night', '21:00', '05:30', 30, 300, 15, 15, 360, 240, 30, 30, 12)""")
             c.execute("INSERT INTO settings(key, value) VALUES ('seeded_night_shift', '1')")
+        if not c.execute("SELECT 1 FROM settings WHERE key = 'migrated_night_0530'").fetchone():
+            # Owner, 2026-11-17: the Night shift is 21:00-05:30 (8 h + lunch); beyond 05:30 is overtime.
+            # Full day from 6 h worked, like the General shift. Only an untouched 21:00-09:00 Night shift moves.
+            c.execute("""UPDATE shifts SET end_time = '05:30',
+                                full_day_min = CASE WHEN full_day_min = 480 THEN 360 ELSE full_day_min END
+                         WHERE name = 'Night' AND start_time = '21:00' AND end_time = '09:00'""")
+            c.execute("INSERT INTO settings(key, value) VALUES ('migrated_night_0530', '1')")
         if not c.execute("SELECT 1 FROM devices").fetchone():
             c.execute("INSERT INTO devices(name, ip, port) VALUES ('Main Gate', '192.168.2.56', 4370)")
 

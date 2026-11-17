@@ -724,6 +724,26 @@ def test_enable_std_hours_adds_column_and_sets_night(tmp_path):
     assert dict(conn.execute("SELECT name, std_min FROM shifts").fetchall()) == {"General": None, "Night": 480}
 
 
+def test_night_shift_moves_to_0530(tmp_path, monkeypatch):
+    from payroll import db as dbm
+    monkeypatch.setattr(dbm, "DB_PATH", str(tmp_path / "n.db"))
+    dbm.init_db()
+    night = lambda: tuple(dbm.connect().execute("SELECT end_time, full_day_min FROM shifts WHERE name='Night'").fetchone())
+    assert night() == ("05:30", 360)                                   # new installs
+    with dbm.tx() as c:                                                # an old database: untouched 21:00-09:00 Night
+        c.execute("UPDATE shifts SET end_time='09:00', full_day_min=480 WHERE name='Night'")
+        c.execute("DELETE FROM settings WHERE key='migrated_night_0530'")
+    dbm.init_db()
+    assert night() == ("05:30", 360)
+    sh = dict(dbm.connect().execute("SELECT * FROM shifts WHERE name='Night'").fetchone())
+    assert engine.paid_day_minutes(sh) == 480                          # 8 h a night, beyond 05:30 is OT
+    with dbm.tx() as c:                                                # an edited Night shift is left alone
+        c.execute("UPDATE shifts SET end_time='08:00' WHERE name='Night'")
+        c.execute("DELETE FROM settings WHERE key='migrated_night_0530'")
+    dbm.init_db()
+    assert night() == ("08:00", 360)
+
+
 def test_pdf_writer_makes_a_valid_document():
     import pymupdf
     from payroll.pdf import PDF, A4_LANDSCAPE, fit, text_width
