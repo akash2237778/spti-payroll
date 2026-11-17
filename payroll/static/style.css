@@ -405,3 +405,9 @@ button.busy { opacity: .7; cursor: progress; }
 @media (max-width: 980px) { .salary-grid { grid-template-columns: minmax(0, 1fr); } }
 .pane-grid.flow > .sub > form:last-child { flex: 0 0 auto; }
 .pane-grid.flow > .sub > form:last-child > .actions:last-child, .pane-grid.flow > .sub > .actions:last-child { margin-top: 0; }
+
+/* ---- OT grace for this employee and month (employee page, beside the late-penalty bar) */
+.grace-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; border: 1px solid var(--line, #dde3ea); border-radius: 8px; padding: 4px 10px; margin: 0; }
+.grace-bar input[type=number] { width: 4.2em; padding: 3px 6px; }
+.table-bar .grace-bar { margin-left: auto; }
+.table-bar .grace-bar + .late-bar { margin-left: 0; }

@@ -744,6 +744,28 @@ def test_night_shift_moves_to_0530(tmp_path, monkeypatch):
     assert night() == ("08:00", 360)
 
 
+def test_ot_grace_per_employee_per_month(tmp_path, monkeypatch):
+    from payroll import db as dbm
+    monkeypatch.setattr(dbm, "DB_PATH", str(tmp_path / "g.db"))
+    dbm.init_db()
+    with dbm.tx() as c:
+        gen = c.execute("SELECT id FROM shifts WHERE name='General'").fetchone()[0]
+        for eid in (1, 2):
+            c.execute("INSERT INTO employees(id, device_user_id, name, shift_id, weekly_off) VALUES (?,?,?,?, '6')", (eid, str(eid), f"E{eid}", gen))
+        for day in (dt.date(2026, 9, 30), dt.date(2026, 10, 1)):   # 09:00-19:20 = 1:50 after 17:30
+            for uid in ("1", "2"):
+                c.execute("INSERT INTO punches(device_user_id, ts) VALUES (?, ?)", (uid, f"{day} 09:00:00"))
+                c.execute("INSERT INTO punches(device_user_id, ts) VALUES (?, ?)", (uid, f"{day} 19:20:00"))
+        c.execute("INSERT INTO ot_grace_month(employee_id, month, minutes) VALUES (1, '2026-10', 10)")
+    conn = dbm.connect()
+    emps = [dict(r) for r in conn.execute("SELECT * FROM employees")]
+    res = engine.employee_days(conn, emps, dt.date(2026, 9, 30), dt.date(2026, 10, 1), dbm.get_settings(conn), today=TODAY)
+    ot = {eid: [d["ot_min"] for d in res[eid]["days"]] for eid in (1, 2)}
+    assert ot[1] == [90, 120]        # shift grace 5 in September; 10 min grace in October: 1:50 -> 2:00
+    assert ot[2] == [90, 90]         # other employee keeps the shift's grace
+    assert not any(d["shift_changed"] for d in res[1]["days"])
+
+
 def test_pdf_writer_makes_a_valid_document():
     import pymupdf
     from payroll.pdf import PDF, A4_LANDSCAPE, fit, text_width

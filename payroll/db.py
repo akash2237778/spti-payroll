@@ -95,6 +95,11 @@ CREATE TABLE IF NOT EXISTS esi_overrides (     -- employee ESI deduction entered
     month TEXT NOT NULL, amount REAL NOT NULL, reason TEXT DEFAULT '', created_by TEXT, created_at TEXT,
     UNIQUE(employee_id, month));
 
+CREATE TABLE IF NOT EXISTS ot_grace_month (    -- OT rounding grace for one employee in one month (instead of the shift's)
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    month TEXT NOT NULL, minutes INTEGER NOT NULL, created_by TEXT, created_at TEXT,
+    PRIMARY KEY (employee_id, month));
+
 CREATE TABLE IF NOT EXISTS employee_groups (   -- saved selections of employees (kept across months)
     id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE, created_by TEXT, created_at TEXT);
 

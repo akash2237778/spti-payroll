@@ -42,6 +42,19 @@
 {% set can_pen = can_edit and not locked %}
 <div class="table-bar noprint">
   <details class="legend-toggle"><summary class="small">Status colours</summary>{{ legend() }}</details>
+  {% set sg = shift_graces|join('/') %}
+  {% if can_pen %}
+  <form method="post" action="{{ url_for('ot_grace_set', eid=emp.id) }}" class="grace-bar small" title="An OT block (e.g. 30 min) still counts when at most this many minutes short. Only for {{ emp.name }}, only in {{ month }}.">
+    {{ csrf_field() }}<input type="hidden" name="month" value="{{ month }}"><input type="hidden" name="back" value="{{ request.full_path }}">
+    <b>OT grace {{ month }}:</b>
+    <input type="number" name="minutes" min="0" max="120" step="1" value="{{ ot_grace_set if ot_grace_set is not none else '' }}" placeholder="{{ sg }}" aria-label="OT grace minutes this month"> min
+    {% if ot_grace_set is not none %}<span class="badge warn">this month only</span>{% else %}<span class="muted">shift's {{ sg }} min</span>{% endif %}
+    <button class="light small">Save</button>
+    {% if ot_grace_set is not none %}<button class="light small" name="action" value="clear">Use shift's {{ sg }}</button>{% endif %}
+  </form>
+  {% else %}
+  <div class="grace-bar small"><b>OT grace:</b> {{ ot_grace_set if ot_grace_set is not none else sg }} min{% if ot_grace_set is not none %} <span class="badge warn">this month only</span>{% endif %}</div>
+  {% endif %}
   {% if can_pen and s.get('late_count') %}
   <div class="late-bar small"><b>Late penalty:</b> {{ s.get('late_count',0)|days }} late day(s), {{ s.get('late_penalty_days',0)|days }} penalized,
     {{ fmt_min(s.get('late_penalty_min',0)) }} OT removed.

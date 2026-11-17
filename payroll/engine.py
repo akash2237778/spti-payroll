@@ -508,8 +508,14 @@ def load_context(conn, start, end):
             roster[r["employee_id"]][r["work_date"]] = dict(r)
     except Exception:   # older database without the roster table
         pass
+    ot_grace_m = defaultdict(dict)
+    try:
+        for r in conn.execute("SELECT * FROM ot_grace_month WHERE month BETWEEN ? AND ?", (start.isoformat()[:7], end.isoformat()[:7])):
+            ot_grace_m[r["employee_id"]][r["month"]] = int(r["minutes"])
+    except Exception:   # older database without the table
+        pass
     return {"shifts": shifts, "holidays": holidays, "leaves": leaves, "overrides": overrides, "assignments": assignments,
-            "penalties": penalties, "gates": gates, "roster": roster}
+            "penalties": penalties, "gates": gates, "roster": roster, "ot_grace": ot_grace_m}
 
 
 def suggest_penalty(late_min, settings):
@@ -663,6 +669,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
         shifts_e = with_work_hours(ctx["shifts"], e)
         base_shift = shifts_e.get(e["shift_id"], shifts_e[default_id])
         roster_e = ctx["roster"].get(e["id"], {})
+        grace_e = ctx["ot_grace"].get(e["id"], {})
         shift_on = make_shift_on(ctx["assignments"].get(e["id"], []), base_shift, shifts_e, roster_e)
         stream = streams.get(e["device_user_id"], [])
         multi = bool(e.get("multi_punch"))
@@ -678,7 +685,11 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
         while d <= outer_end:
             ds = d.isoformat()
             shift = shift_on(d)
-            active = (not e["join_date"] or ds >= e["join_date"][:10]) and (not e["exit_date"] or ds <= e["exit_date"][:10])
+            changed = shift is not base_shift
+            g_min = grace_e.get(ds[:7])
+            if g_min is not None:      # this employee's OT grace for this month replaces the shift's
+                shift = dict(shift, ot_grace_min=g_min)
+            active =(not e["join_date"] or ds >= e["join_date"][:10]) and (not e["exit_date"] or ds <= e["exit_date"][:10])
             rec = evaluate_day(
                 d, None, shift, settings, sessions=by_day.get(d, []),
                 weekly_off=is_weekly_off(d, offs, roster_e.get(ds)), holiday=ctx["holidays"].get(ds),
@@ -689,7 +700,7 @@ def employee_days(conn, employees, start, end, settings, today=None, machine_onl
             rec["late_penalty_min"] = ctx["penalties"][e["id"]].get(ds, 0)
             rec["late_penalty_set"] = ds in ctx["penalties"][e["id"]]
             rec["late_penalty_suggest"] = suggest_penalty(rec["late_min"], settings) if rec["late_min"] else 0
-            rec["shift_changed"] = shift is not base_shift
+            rec["shift_changed"] = changed
             rec["roster"] = roster_e.get(ds)
             if rec["sessions"] and start <= d <= end:
                 used[shift.get("id") or shift["name"]] += 1

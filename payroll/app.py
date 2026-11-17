@@ -1090,7 +1090,9 @@ def att_employee(eid):
     if can_pay():
         attach_cash_paid([row], month)
         attach_bank_paid([row], month)
-    return render_template("employee_month.html", adv=adv, PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
+    shift_graces = sorted({engine.ot_grace(dict(sh)) for sh in g.conn.execute("SELECT * FROM shifts").fetchall()
+                           if any((d["shift"].get("id") == sh["id"]) for d in row["days"])}) or [engine.ot_grace(dict(row["shift"]))]
+    return render_template("employee_month.html", ot_grace_set=ot_grace_month(eid, month), shift_graces=shift_graces, adv=adv,PAY_MODES=payroll.PAY_MODES, row=row, emp=emp, month=month, prev=prev, nxt=nxt, locked=locked, others=others,
                            edited=edited_set(m_start, m_end, eid),
                            history=shift_history(eid, month), shifts=g.conn.execute("SELECT * FROM shifts").fetchall(),
                            adjs=g.conn.execute("""SELECT * FROM adjustments WHERE employee_id=? AND month=? AND kind != 'advance'
@@ -1151,6 +1153,49 @@ def fix_shift(emp, work_date, tin, tout, reason):
 def _dtl(v):
     """Parse an <input type=datetime-local> value."""
     return dt.datetime.strptime(v.replace("T", " ")[:16], "%Y-%m-%d %H:%M")
+
+
+def ot_grace_month(eid, month):
+    """This employee's OT rounding grace for the month, or None when each shift's own grace applies."""
+    try:
+        r = g.conn.execute("SELECT minutes FROM ot_grace_month WHERE employee_id=? AND month=?", (eid, month)).fetchone()
+    except Exception:   # older database without the table
+        return None
+    return r["minutes"] if r else None
+
+
+@app.route("/attendance/employee/<int:eid>/ot_grace", methods=["POST"])
+@edit_required
+def ot_grace_set(eid):
+    """OT rounding grace for one employee in one month (blank = the shift's grace)."""
+    emp = g.conn.execute("SELECT * FROM employees WHERE id = ?", (eid,)).fetchone() or abort(404)
+    f = request.form
+    month = f["month"]
+    dt.datetime.strptime(month, "%Y-%m")
+    ensure_unlocked(month)
+    back = f.get("back", "")
+    back = back if back.startswith("/") and not back.startswith("//") else url_for("att_employee", eid=eid, month=month)
+    raw = (f.get("minutes") or "").strip()
+    if f.get("action") == "clear" or raw == "":
+        n = g.conn.execute("DELETE FROM ot_grace_month WHERE employee_id=? AND month=?", (eid, month)).rowcount
+        if n:
+            audit("ot_grace_clear", {"emp": eid, "month": month})
+        flash(f"OT grace for {emp['name']} {month}: back to the shift's grace", "ok")
+        return redirect(back)
+    try:
+        minutes = int(raw)
+        if not 0 <= minutes <= 120:
+            raise ValueError
+    except ValueError:
+        flash("Not saved: OT grace must be whole minutes from 0 to 120", "error")
+        return redirect(back)
+    g.conn.execute("""INSERT INTO ot_grace_month(employee_id, month, minutes, created_by, created_at) VALUES (?,?,?,?,?)
+                      ON CONFLICT(employee_id, month) DO UPDATE SET minutes=excluded.minutes,
+                      created_by=excluded.created_by, created_at=excluded.created_at""",
+                   (eid, month, minutes, g.user["username"], dt.datetime.now().strftime(TS_FMT)))
+    audit("ot_grace_set", {"emp": eid, "month": month, "minutes": minutes})
+    flash(f"OT grace for {emp['name']} {month} set to {minutes} min", "ok")
+    return redirect(back)
 
 
 @app.route("/attendance/employee/<int:eid>/penalty", methods=["POST"])
