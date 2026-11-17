@@ -389,10 +389,14 @@ def test_lunch_deducted_only_if_present_during_lunch():
 
 def test_paid_lunch_break():
     r = ev8((9, 0), (17, 30), paid_break=True)
-    assert r["worked_min"] == 510 and r["ot_min"] == 0          # lunch paid, but no OT before 17:30
+    assert r["worked_min"] == 510 and r["ot_min"] == 30         # paid lunch counts as worked time -> 30 min OT
     r = ev8((9, 0), (19, 30), paid_break=True)
-    assert r["worked_min"] == 630 and r["ot_min"] == 120        # OT still counted from 17:30
-    assert engine.ot_base_minutes(SHIFT8, True) == 510 and engine.ot_base_minutes(SHIFT8) == 480
+    assert r["worked_min"] == 630 and r["ot_min"] == 150        # 2 h after 17:30 + the paid lunch
+    r = ev8((9, 0), (19, 30))
+    assert r["worked_min"] == 600 and r["ot_min"] == 120        # unpaid lunch: only the 2 h after 17:30
+    a, b = ev8((14, 0), (19, 0), paid_break=True), ev8((14, 0), (19, 0))
+    assert a["ot_min"] == b["ot_min"] and a["worked_min"] == b["worked_min"]   # no lunch taken: paid lunch changes nothing
+    assert engine.ot_base_minutes(SHIFT8, True) == 480 and engine.ot_base_minutes(SHIFT8) == 480
     emp = {"salary_type": "hourly", "salary_rate": 100, "ot_enabled": 1, "ot_multiplier": 1, "pf_enabled": 0, "esi_enabled": 0}
     sm = {"payable_days": 1, "std_min": 480, "worked_min": 510, "ot_min": 0, "paid_off_days": 0}
     assert payroll.calculate(emp, sm, "2026-09", S)["basic"] == 850   # 8.5 paid hours x 100

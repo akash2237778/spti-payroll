@@ -211,8 +211,11 @@ def paid_day_minutes(shift):
 
 
 def ot_base_minutes(shift, paid_break=False):
-    """Paid minutes in a normal day before overtime starts (lunch included when it is paid)."""
-    return paid_day_minutes(shift) + (int(shift.get("break_min") or 0) if paid_break else 0)
+    """Worked minutes in a normal day before overtime starts: the standard paid hours (e.g. 8 h).
+    A paid lunch is simply not deducted from worked time, so it counts towards overtime like any other
+    worked minute (09:00-17:30 with paid lunch = 8:30 worked = 0:30 OT on an 8 h standard).
+    `paid_break` is kept for callers; it no longer moves the overtime start."""
+    return paid_day_minutes(shift)
 
 
 def _override_session(work_date, ov):

@@ -10,7 +10,7 @@
 {% endif %}
 <p class="muted">Worked time = last punch − first punch − unpaid lunch. With a fixed <b>lunch window</b> (e.g. 13:00 for 30 min) lunch is deducted
 only for the part of the window the person was present: 09:00–17:30 = 8 h, 14:00–20:00 = 6 h (no lunch taken). Without a window, the break is deducted once the span is longer than "deduct break after".
-Employees marked <b>Paid lunch break</b> (on their profile) never lose it.
+Employees marked <b>Paid lunch break</b> (on their profile) never lose it: their lunch counts as worked time and adds to overtime.
 OT = worked time beyond the shift's standard paid hours (set per shift, e.g. 8 h on a 12-hour night duty; blank = shift length − break), counted only above the OT threshold and rounded down to the OT block.
 Punches before the "day starts at" hour count towards the previous day, so late check-outs after midnight are handled.</p>
 {% macro shift_form(s) %}

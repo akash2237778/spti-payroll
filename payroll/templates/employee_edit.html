@@ -31,7 +31,7 @@
     {% for w in WEEKDAYS %}<label class="chk"><input type="checkbox" name="weekly_off" value="{{ loop.index0 }}" {{ 'checked' if (loop.index0|string) in offs }}>{{ w }}</label>{% endfor %}</div>
   <div><label>&nbsp;</label>
     {% if can_pay %}<label class="chk"><input type="checkbox" name="ot_enabled" {{ 'checked' if (e.ot_enabled if emp else 1) }}> OT eligible</label>{% endif %}
-    <label class="chk" title="Lunch counts as paid time (not deducted); overtime still starts after the shift end"><input type="checkbox" name="paid_break" {{ 'checked' if e.paid_break }}> Paid lunch break</label>
+    <label class="chk" title="Lunch counts as worked time (not deducted), so it adds to overtime: 09:00-17:30 on an 8 h standard = 30 min OT"><input type="checkbox" name="paid_break" {{ 'checked' if e.paid_break }}> Paid lunch break</label>
     <label class="chk" title="Several in/out punches a day: worked time = sum of in->out pairs"><input type="checkbox" name="multi_punch" {{ 'checked' if e.multi_punch }}> Multiple in/out</label>
     {% if can_pay %}<label class="chk"><input type="checkbox" name="pf_enabled" {{ 'checked' if e.pf_enabled }}> PF</label>
     <label class="chk" title="Untick = no ESI deducted for this employee"><input type="checkbox" name="esi_enabled" {{ 'checked' if e.esi_enabled }}> ESI</label>
