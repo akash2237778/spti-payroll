@@ -75,7 +75,7 @@ def before():
     g.user = None
     if session.get("uid"):
         g.user = g.conn.execute("SELECT * FROM app_users WHERE id = ?", (session["uid"],)).fetchone()
-    open_endpoints = ("login", "setup", "static", "healthz")
+    open_endpoints = ("login", "setup", "static", "healthz", "shopfloor_people")   # shopfloor: token-checked itself
     if request.endpoint in open_endpoints:
         return
     if not g.conn.execute("SELECT 1 FROM app_users").fetchone():
@@ -225,6 +225,35 @@ def healthz():
     """Container health check: the database answers."""
     g.conn.execute("SELECT 1").fetchone()
     return {"ok": True}
+
+
+@app.route("/api/shopfloor/people")
+def shopfloor_people():
+    """Read-only list of active employees with the day's attendance, for ToolTrack (shop-floor tracking).
+    Needs 'Authorization: Bearer <token>' with the token made on the Settings page. No pay data is sent."""
+    token = (g.settings.get("shopfloor_token") or "").strip()
+    given = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token or not secrets.compare_digest(given, token):
+        return {"error": "Not allowed"}, 403
+    try:
+        day = dt.date.fromisoformat(request.args.get("date") or dt.date.today().isoformat())
+    except ValueError:
+        return {"error": "Bad date"}, 400
+    emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql())]
+    data = engine.employee_days(g.conn, emps, day, day, g.settings, today=dt.date.today())
+    out = []
+    for e in emps:
+        r = data[e["id"]]["days"][0]
+        group = presence_group(r)[1]
+        out.append({
+            "id": e["id"], "code": e["emp_code"] or e["device_user_id"], "name": e["name"],
+            "department": e["department"] or "", "designation": e["designation"] or "", "category": e["category"] or "",
+            "shift": r["shift"].get("name", ""), "status": r["status"] or "", "presence": group,
+            "present": group in ("Present", "Missing punch"),
+            "in": r["in"].strftime("%H:%M") if r.get("in") else None,
+            "out": r["out"].strftime("%H:%M") if r.get("out") else None,
+        })
+    return {"date": day.isoformat(), "people": out}
 
 
 @app.route("/setup", methods=["GET", "POST"])
@@ -2276,6 +2305,11 @@ def settings_view():
                 g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES (?,?)", (k, "1" if f.get(k) else "0"))
             audit("settings_save", {k: f[k] for k in f if k != "csrf"})
             flash("Settings saved", "ok")
+        elif act == "shopfloor_token":
+            g.conn.execute("INSERT OR REPLACE INTO settings(key, value) VALUES ('shopfloor_token', ?)",
+                           ("" if f.get("off") else secrets.token_urlsafe(24),))
+            audit("shopfloor_token", "switched off" if f.get("off") else "new token")
+            flash("Shop-floor link switched off" if f.get("off") else "New shop-floor link token made: paste it into ToolTrack > Admin", "ok")
         elif act == "add_user":
             role = f.get("role") if f.get("role") in ROLES else "hr"
             if len(f["password"]) < 6:
