@@ -105,6 +105,14 @@
     <button>Add user</button></form>{% endif %}
 </div>
 {% endif %}
+{% if is_admin %}<div class="card grow"><h2>Shop-floor link (ToolTrack)</h2>
+  <p class="muted">Lets ToolTrack read the employee list and today's attendance (names, department, present/absent, in/out time).
+    No salary or bank data is shared. Paste the token into ToolTrack &gt; Admin &gt; Payroll link.</p>
+  {% if settings.shopfloor_token %}<p><b>Token:</b> <code style="user-select:all">{{ settings.shopfloor_token }}</code></p>{% else %}<p>Not switched on.</p>{% endif %}
+  <form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="action" value="shopfloor_token">
+    <button>{{ 'Make a new token' if settings.shopfloor_token else 'Switch on' }}</button></form>
+  {% if settings.shopfloor_token %}<form method="post" class="inline">{{ csrf_field() }}<input type="hidden" name="action" value="shopfloor_token"><input type="hidden" name="off" value="1"><button class="danger small">Switch off</button></form>{% endif %}
+</div>{% endif %}
 <div class="card grow"><h2>Change my password</h2>
   <form method="post" action="{{ url_for('change_password') }}">{{ csrf_field() }}
     <label>Current password</label><input type="password" name="old" required>
