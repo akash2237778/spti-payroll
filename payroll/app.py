@@ -69,13 +69,14 @@ def before():
     g.settings = db.get_settings(g.conn)
     if "csrf" not in session:
         session["csrf"] = secrets.token_hex(16)
-    if request.method == "POST" and request.endpoint not in ("static",):
+    # shopfloor_sync is called by ToolTrack, not a browser form: it is checked by its Bearer token instead
+    if request.method == "POST" and request.endpoint not in ("static", "shopfloor_sync"):
         if request.form.get("csrf") != session.get("csrf"):
             abort(400, "Invalid form token, please reload the page")
     g.user = None
     if session.get("uid"):
         g.user = g.conn.execute("SELECT * FROM app_users WHERE id = ?", (session["uid"],)).fetchone()
-    open_endpoints = ("login", "setup", "static", "healthz", "shopfloor_people")   # shopfloor: token-checked itself
+    open_endpoints = ("login", "setup", "static", "healthz", "shopfloor_people", "shopfloor_sync")   # shopfloor: token-checked itself
     if request.endpoint in open_endpoints:
         return
     if not g.conn.execute("SELECT 1 FROM app_users").fetchone():
@@ -227,18 +228,57 @@ def healthz():
     return {"ok": True}
 
 
+def _shopfloor_token_ok():
+    token = (g.settings.get("shopfloor_token") or "").strip()
+    given = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    return bool(token) and secrets.compare_digest(given, token)
+
+
 @app.route("/api/shopfloor/people")
 def shopfloor_people():
     """Read-only list of active employees with the day's attendance, for ToolTrack (shop-floor tracking).
     Needs 'Authorization: Bearer <token>' with the token made on the Settings page. No pay data is sent."""
-    token = (g.settings.get("shopfloor_token") or "").strip()
-    given = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
-    if not token or not secrets.compare_digest(given, token):
+    if not _shopfloor_token_ok():
         return {"error": "Not allowed"}, 403
     try:
         day = dt.date.fromisoformat(request.args.get("date") or dt.date.today().isoformat())
     except ValueError:
         return {"error": "Bad date"}, 400
+    return _shopfloor_list(day)
+
+
+SHOPFLOOR_SYNC_GAP = 60     # seconds: ToolTrack can't make payroll read the attendance machines more often than this
+
+
+@app.route("/api/shopfloor/sync", methods=["POST"])
+def shopfloor_sync():
+    """ToolTrack's 'Fetch latest': read the attendance machines now (same sync as Devices > Sync), then return
+    today's list. Same token as /api/shopfloor/people; at most once a minute."""
+    if not _shopfloor_token_ok():
+        return {"error": "Not allowed"}, 403
+    last = g.conn.execute("SELECT MAX(last_sync) FROM devices WHERE active = 1").fetchone()[0]
+    recent = False
+    if last:
+        try:
+            recent = (dt.datetime.now() - dt.datetime.strptime(last, "%Y-%m-%d %H:%M:%S")).total_seconds() < SHOPFLOOR_SYNC_GAP
+        except ValueError:
+            pass
+    g.conn.commit()  # release locks before the sync opens its own connection
+    if recent:
+        results = [{"ok": True, "message": f"Machines were read at {last[11:16]}, less than a minute ago"}]
+    else:
+        try:
+            results = device.sync_all("toolTrack")
+        except Exception as e:
+            results = [{"ok": False, "error": f"Sync failed: {e}"}]
+        if not results:
+            results = [{"ok": False, "error": "No attendance machine is set up in payroll"}]
+    out = _shopfloor_list(dt.date.today())
+    out["machines"] = [{"ok": bool(r.get("ok")), "message": r.get("message") or r.get("error") or ""} for r in results]
+    return out
+
+
+def _shopfloor_list(day):
     emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql())]
     data = engine.employee_days(g.conn, emps, day, day, g.settings, today=dt.date.today())
     out = []
