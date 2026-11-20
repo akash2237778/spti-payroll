@@ -50,6 +50,42 @@ def test_shopfloor_people(client):
     assert anon.get("/api/shopfloor/people", headers={"Authorization": f"Bearer {token}"}).status_code == 403
 
 
+def test_shopfloor_in_out_and_recent_leavers(client):
+    c = client
+    today = dt.date.today()
+    last_month = (today.replace(day=1) - dt.timedelta(days=1)).replace(day=10)
+    old = (today.replace(day=1) - dt.timedelta(days=70))
+    with db.tx() as conn:
+        for uid, name in (("31", "Inside Now"), ("32", "Gone Out"), ("33", "Back Again")):
+            conn.execute("INSERT INTO employees (device_user_id, emp_code, name) VALUES (?, ?, ?)", (uid, "E" + uid, name))
+        # left recently (worked last month) and left long ago
+        conn.execute("INSERT INTO employees (device_user_id, emp_code, name, active, exit_date) VALUES ('34', 'E34', 'Left Recently', 0, ?)",
+                     (str(last_month),))
+        conn.execute("INSERT INTO employees (device_user_id, emp_code, name, active, exit_date) VALUES ('35', 'E35', 'Left Long Ago', 0, ?)",
+                     (str(old),))
+        conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('34', ?)", (f"{last_month} 09:00:00",))
+        conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('35', ?)", (f"{old} 09:00:00",))
+        conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('31', ?)", (f"{today} 08:55:00",))
+        conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('32', ?)", (f"{today} 08:50:00",))
+        conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('32', ?)", (f"{today} 13:10:00",))
+        for t in ("08:45:00", "13:00:00", "13:40:00"):
+            conn.execute("INSERT INTO punches (device_user_id, ts) VALUES ('33', ?)", (f"{today} {t}",))
+    c.post("/settings", data={"action": "shopfloor_token", "csrf": "t"})
+    with db.tx() as conn:
+        token = conn.execute("SELECT value FROM settings WHERE key = 'shopfloor_token'").fetchone()[0]
+    anon = c.application.test_client()
+    people = {p["name"]: p for p in anon.get("/api/shopfloor/people", headers={"Authorization": f"Bearer {token}"}).get_json()["people"]}
+    assert people["Inside Now"]["in_now"] is True
+    assert people["Gone Out"]["in_now"] is False and people["Gone Out"]["last_punch"] == "13:10" and people["Gone Out"]["present"]
+    assert people["Back Again"]["in_now"] is True
+    assert "Left Recently" in people and people["Left Recently"]["active"] is False
+    assert "Left Long Ago" not in people
+    # another day: no live in/out
+    yday = (today - dt.timedelta(days=1)).isoformat()
+    p2 = {p["name"]: p for p in anon.get(f"/api/shopfloor/people?date={yday}", headers={"Authorization": f"Bearer {token}"}).get_json()["people"]}
+    assert p2["Inside Now"]["in_now"] is None
+
+
 class _FakeRec:
     def __init__(self, **kw):
         self.__dict__.update(kw)

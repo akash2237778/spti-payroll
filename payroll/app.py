@@ -279,21 +279,40 @@ def shopfloor_sync():
 
 
 def _shopfloor_list(day):
-    emps = [dict(e) for e in g.conn.execute("SELECT * FROM employees WHERE active = 1 ORDER BY " + emp_order_sql())]
-    data = engine.employee_days(g.conn, emps, day, day, g.settings, today=dt.date.today())
+    # everyone still working here, plus anyone who worked last month or this month (even if marked inactive since),
+    # so ToolTrack can still plan and look back on their work
+    since = (day.replace(day=1) - dt.timedelta(days=1)).replace(day=1).isoformat()
+    emps = [dict(e) for e in g.conn.execute(
+        "SELECT * FROM employees WHERE active = 1 OR exit_date >= ? OR device_user_id IN "
+        "(SELECT DISTINCT device_user_id FROM punches WHERE ts >= ? AND deleted = 0) ORDER BY " + emp_order_sql(),
+        (since, since))]
+    today = dt.date.today()
+    data = engine.employee_days(g.conn, emps, day - dt.timedelta(days=1), day, g.settings, today=today)
+    now = dt.datetime.now()
     out = []
     for e in emps:
-        r = data[e["id"]]["days"][0]
+        prev, r = data[e["id"]]["days"]
         group = presence_group(r)[1]
+        punches = r.get("punches") or []
+        # today only: an odd number of punches = inside now; an even number = punched out (gone out / left for the day).
+        # A night shift that started yesterday and isn't punched out yet still counts as inside.
+        in_now = None
+        if day == today:
+            pp = prev.get("punches") or []
+            in_now = (len(punches) % 2 == 1) if punches else bool(
+                len(pp) % 2 == 1 and (now - pp[-1]).total_seconds() < 16 * 3600)
         out.append({
             "id": e["id"], "code": e["emp_code"] or e["device_user_id"], "name": e["name"],
             "department": e["department"] or "", "designation": e["designation"] or "", "category": e["category"] or "",
+            "active": bool(e["active"]), "exit_date": e["exit_date"] or None,
             "shift": r["shift"].get("name", ""), "status": r["status"] or "", "presence": group,
             "present": group in ("Present", "Missing punch"),
             "in": r["in"].strftime("%H:%M") if r.get("in") else None,
             "out": r["out"].strftime("%H:%M") if r.get("out") else None,
+            "in_now": in_now,
+            "last_punch": punches[-1].strftime("%H:%M") if punches else None,
         })
-    return {"date": day.isoformat(), "people": out}
+    return {"date": day.isoformat(), "since": since, "people": out}
 
 
 @app.route("/setup", methods=["GET", "POST"])
